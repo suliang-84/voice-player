@@ -838,8 +838,22 @@ function removeBookmark(track, id) {
   if (key) localStorage.setItem(`vp-bookmarks:${key}`, JSON.stringify(track.state.bookmarks))
 }
 
-// ── 占位函数（Task 8-9 实现） ───────────────────────────────────────────
-function exportReport(_track) {}
+// ── 导出标注报告 ─────────────────────────────────────────────────────────
+function exportReport(track) {
+  const report = {
+    audio: track.config.src || track.config.file?.name || 'unknown',
+    duration: track.state.duration,
+    exportedAt: new Date().toISOString(),
+    bookmarks: track.state.bookmarks,
+    annotations: track.state.annotations,
+  }
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `report_${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
 </script>
 
 <style scoped>
