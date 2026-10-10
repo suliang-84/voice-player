@@ -437,6 +437,7 @@ async function loadAudio(track) {
 
 // ── 重试加载 ─────────────────────────────────────────────────────────────
 async function retryLoad(track) {
+  stopSilenceDetection(track)
   // 停止镜像循环
   if (mirrorRafIds[track.id]) {
     cancelAnimationFrame(mirrorRafIds[track.id])
@@ -565,6 +566,8 @@ const silenceTimers = {}
 const regionListeners = {}
 
 function startSilenceDetection(track) {
+  // Guard: prevent duplicate AudioContext on same track
+  if (analyserNodes[track.id]) return
   if (!track.state.ws) return
   const mediaEl = track.state.ws.getMediaElement()
   if (!mediaEl) return
