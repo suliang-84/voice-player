@@ -196,6 +196,8 @@ const tracks = computed(() => {
 const waveRefs = {}
 const mirrorRefs = {}
 const wrapRefs = {}
+// Store rAF IDs for mirror loops keyed by track id
+const mirrorRafIds = {}
 
 function setWaveRef(el, id) { if (el) waveRefs[id] = el }
 function setMirrorRef(el, id) { if (el) mirrorRefs[id] = el }
@@ -289,32 +291,140 @@ async function initWaveSurfer(track) {
   state.regions = regions
   state.skipSilencePlugin = skipSilencePlugin
 
-  // ── 镜像下半：克隆 WaveSurfer canvas 到 mirror div ─────────────────
+  // ── 镜像下半：用 requestAnimationFrame 持续 drawImage 复制像素 ──────
   if (isMirror) {
     ws.on('ready', () => {
       const mirrorDiv = mirrorRefs[track.id]
       if (!mirrorDiv) return
+
+      // 取 WaveSurfer shadow DOM 或普通 DOM 中的第一块 canvas
+      const sourceCanvas =
+        waveContainer.shadowRoot?.querySelector('canvas') ||
+        waveContainer.querySelector('canvas')
+
+      if (!sourceCanvas) return
+
+      // 停止旧循环（如重新初始化时）
+      if (mirrorRafIds[track.id]) cancelAnimationFrame(mirrorRafIds[track.id])
+
+      // 创建镜像 canvas，尺寸与源 canvas 保持一致
       mirrorDiv.innerHTML = ''
-      const sourceCanvas = waveContainer.querySelector('canvas')
-      if (sourceCanvas) {
-        const clone = sourceCanvas.cloneNode(true)
-        mirrorDiv.appendChild(clone)
+      const mirrorCanvas = document.createElement('canvas')
+      mirrorCanvas.width = sourceCanvas.width
+      mirrorCanvas.height = sourceCanvas.height
+      mirrorCanvas.style.width = '100%'
+      mirrorCanvas.style.height = '100%'
+      mirrorDiv.appendChild(mirrorCanvas)
+      const mirrorCtx = mirrorCanvas.getContext('2d')
+
+      // rAF 持续同步像素
+      function drawMirror() {
+        if (mirrorCanvas.width !== sourceCanvas.width || mirrorCanvas.height !== sourceCanvas.height) {
+          mirrorCanvas.width = sourceCanvas.width
+          mirrorCanvas.height = sourceCanvas.height
+        }
+        try { mirrorCtx.drawImage(sourceCanvas, 0, 0) } catch (_) { /* ignore cross-origin */ }
+        mirrorRafIds[track.id] = requestAnimationFrame(drawMirror)
       }
-    })
-    // 进度更新时同步镜像
-    ws.on('timeupdate', () => {
-      const mirrorDiv = mirrorRefs[track.id]
-      if (!mirrorDiv) return
-      mirrorDiv.innerHTML = ''
-      const sourceCanvas = waveContainer.querySelector('canvas')
-      if (sourceCanvas) {
-        const clone = sourceCanvas.cloneNode(true)
-        mirrorDiv.appendChild(clone)
-      }
+      drawMirror()
     })
   }
 
-  // loadAudio(track) called in Task 4
+  // ── 音频加载（Task 4）──────────────────────────────────────────────
+  await loadAudio(track)
+}
+
+// ── 音频加载 ────────────────────────────────────────────────────────────
+async function loadAudio(track) {
+  const { config, state } = track
+  const ws = state.ws
+
+  // ── 绑定加载事件 ──────────────────────────────────────────────────────
+  ws.on('loading', (percent) => {
+    state.loadProgress = percent
+  })
+
+  ws.on('ready', () => {
+    state.duration = ws.getDuration()
+    state.isLoading = false
+    state.loadProgress = 100
+    state.loadError = null
+    // 从 localStorage 恢复书签与批注
+    const storageKey = config.src || config.file?.name
+    if (storageKey) {
+      const saved = localStorage.getItem(`vp-bookmarks:${storageKey}`)
+      if (saved) {
+        try { state.bookmarks = JSON.parse(saved) } catch (_) {}
+      }
+      const savedAnn = localStorage.getItem(`vp-annotations:${storageKey}`)
+      if (savedAnn) {
+        try { state.annotations = JSON.parse(savedAnn) } catch (_) {}
+      }
+    }
+  })
+
+  ws.on('error', (err) => {
+    state.isLoading = false
+    state.loadError = err?.message || '音频加载失败，请检查文件路径或网络'
+  })
+
+  ws.on('finish', () => { state.isPlaying = false })
+
+  ws.on('timeupdate', (time) => {
+    state.currentTime = time
+
+    // peaks 模式跳过空音
+    if (state.skipSilence && config.silences?.length) {
+      const silent = config.silences.find(r => time >= r.start && time < r.end)
+      if (silent) ws.setTime(silent.end)
+    }
+
+    // AB 同步
+    if (track.id === 'A' && syncAB.value && stateB.ws && !stateB.isPlaying) {
+      stateB.ws.setTime(time)
+    }
+
+    // 区间循环
+    if (state.loopEnabled && state.toolbar.region) {
+      const region = state.toolbar.region
+      if (time >= region.end) ws.setTime(region.start)
+    }
+  })
+
+  // ── 解析 URL ──────────────────────────────────────────────────────────
+  const url = config.file
+    ? (state.objectUrl = URL.createObjectURL(config.file))
+    : config.src
+
+  if (!url) {
+    state.isLoading = false
+    return
+  }
+
+  state.isLoading = true
+  state.loadProgress = 0
+
+  if (config.peaks) {
+    // peaks 模式：跳过解码，直接渲染；第三参数为时长（秒）
+    ws.load(url, config.peaks, config.duration)
+  } else {
+    // 标准模式：WaveSurfer Web Worker 解码
+    ws.load(url)
+  }
+}
+
+// ── 重试加载 ─────────────────────────────────────────────────────────────
+async function retryLoad(track) {
+  // 停止镜像循环
+  if (mirrorRafIds[track.id]) {
+    cancelAnimationFrame(mirrorRafIds[track.id])
+    delete mirrorRafIds[track.id]
+  }
+  track.state.loadError = null
+  track.state.ws?.destroy()
+  track.state.ws = null
+  await nextTick()
+  await initWaveSurfer(track)
 }
 
 // ── 生命周期 ────────────────────────────────────────────────────────────
@@ -327,6 +437,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   for (const track of tracks.value) {
+    // 停止镜像 rAF 循环
+    if (mirrorRafIds[track.id]) {
+      cancelAnimationFrame(mirrorRafIds[track.id])
+      delete mirrorRafIds[track.id]
+    }
     track.state.ws?.destroy()
     if (track.state.objectUrl) {
       URL.revokeObjectURL(track.state.objectUrl)
@@ -342,8 +457,7 @@ watch(() => props.trackB, async (newVal) => {
   }
 })
 
-// ── 占位函数（Task 4-9 实现） ───────────────────────────────────────────
-function retryLoad(_track) {}
+// ── 占位函数（Task 5-9 实现） ───────────────────────────────────────────
 function togglePlay(_track) {}
 function toggleMute(_track) {}
 function setVolume(_track, _val) {}
