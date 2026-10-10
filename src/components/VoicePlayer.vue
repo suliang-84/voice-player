@@ -204,31 +204,39 @@ function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
 // ── 频谱图颜色映射 ─────────────────────────────────────────────────────
 function buildColorMap(colorMap) {
   const root = rootEl.value
+
   if (colorMap === 'theme' || !colorMap) {
+    // Parse the theme progress color to RGB components
     const base = root
       ? getComputedStyle(root).getPropertyValue('--vp-progress-color').trim()
       : '#2563eb'
-    // 返回 256 色阶数组（WaveSurfer SpectrogramPlugin 需要此格式）
-    return Array.from({ length: 256 }, (_, i) => {
-      const alpha = Math.round((i / 255) * 255).toString(16).padStart(2, '0')
-      return base.startsWith('#') && base.length === 7
-        ? base + alpha
-        : `rgba(37,99,235,${(i / 255).toFixed(3)})`
-    })
+    // Parse hex to RGB (assume 6-digit hex like #2563eb)
+    const hex = base.startsWith('#') ? base.slice(1) : '2563eb'
+    const r = parseInt(hex.slice(0, 2), 16) || 37
+    const g = parseInt(hex.slice(2, 4), 16) || 99
+    const b = parseInt(hex.slice(4, 6), 16) || 235
+    return Array.from({ length: 256 }, (_, i) => [r, g, b, i])
   }
+
   if (colorMap === 'heatmap') {
     return Array.from({ length: 256 }, (_, i) => {
-      const h = Math.round((1 - i / 255) * 240)
-      return `hsl(${h},100%,50%)`
+      const t = i / 255
+      // Blue(0,0,255) → Cyan(0,255,255) → Green(0,255,0) → Yellow(255,255,0) → Red(255,0,0)
+      let r, g, b
+      if (t < 0.25) { r = 0; g = Math.round(t * 4 * 255); b = 255 }
+      else if (t < 0.5) { r = 0; g = 255; b = Math.round((0.5 - t) * 4 * 255) }
+      else if (t < 0.75) { r = Math.round((t - 0.5) * 4 * 255); g = 255; b = 0 }
+      else { r = 255; g = Math.round((1 - t) * 4 * 255); b = 0 }
+      return [r, g, b, i]
     })
   }
-  // 自定义颜色字符串
-  return Array.from({ length: 256 }, (_, i) => {
-    const alpha = i.toString(16).padStart(2, '0')
-    return colorMap.startsWith('#') && colorMap.length === 7
-      ? colorMap + alpha
-      : `rgba(37,99,235,${(i / 255).toFixed(3)})`
-  })
+
+  // Custom hex color string like '#7c3aed'
+  const hex = colorMap.startsWith('#') ? colorMap.slice(1) : '2563eb'
+  const r = parseInt(hex.slice(0, 2), 16) || 37
+  const g = parseInt(hex.slice(2, 4), 16) || 99
+  const b = parseInt(hex.slice(4, 6), 16) || 235
+  return Array.from({ length: 256 }, (_, i) => [r, g, b, i])
 }
 
 // ── WaveSurfer 初始化 ──────────────────────────────────────────────────
