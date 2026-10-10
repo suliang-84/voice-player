@@ -448,6 +448,11 @@ onBeforeUnmount(() => {
       cancelAnimationFrame(mirrorRafIds[track.id])
       delete mirrorRafIds[track.id]
     }
+    // 清理区间事件监听器
+    if (regionListeners[track.id]) {
+      regionListeners[track.id].forEach(unsub => unsub?.())
+      delete regionListeners[track.id]
+    }
     track.state.ws?.destroy()
     if (track.state.objectUrl) {
       URL.revokeObjectURL(track.state.objectUrl)
@@ -537,6 +542,10 @@ const volumeDiffStyle = computed(() => {
 const analyserNodes = {}
 const silenceTimers = {}
 
+// ── 选区事件监听器管理 ──────────────────────────────────────────────────
+// Store unsubscribe functions per track to prevent listener accumulation
+const regionListeners = {}
+
 function startSilenceDetection(track) {
   if (!track.state.ws) return
   const mediaEl = track.state.ws.getMediaElement()
@@ -607,28 +616,36 @@ function toggleRegionMode(track) {
   track.state.loopEnabled = !track.state.loopEnabled
 
   if (track.state.loopEnabled) {
+    // Clean up any previous listeners first
+    if (regionListeners[track.id]) {
+      regionListeners[track.id].forEach(unsub => unsub?.())
+      delete regionListeners[track.id]
+    }
+
     track.state.regions.enableDragSelection({
-      color: getComputedStyle(rootEl.value || document.body)
-        .getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)',
+      color: rootEl.value
+        ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)'
+        : 'rgba(37,99,235,0.2)',
     })
 
-    track.state.regions.on('region-created', (region) => {
-      // 保留最新一个选区
-      track.state.regions.getRegions().forEach(r => {
-        if (r.id !== region.id) r.remove()
-      })
+    const unsubCreated = track.state.regions.on('region-created', (region) => {
+      track.state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
       updateToolbar(track, region)
     })
-
-    track.state.regions.on('region-updated', (region) => {
+    const unsubUpdated = track.state.regions.on('region-updated', (region) => {
       updateToolbar(track, region)
     })
-
-    track.state.regions.on('region-removed', () => {
+    const unsubRemoved = track.state.regions.on('region-removed', () => {
       track.state.toolbar = { visible: false, left: 0, region: null }
       track.state.loopEnabled = false
     })
+    regionListeners[track.id] = [unsubCreated, unsubUpdated, unsubRemoved]
   } else {
+    // Clean up listeners
+    if (regionListeners[track.id]) {
+      regionListeners[track.id].forEach(unsub => unsub?.())
+      delete regionListeners[track.id]
+    }
     track.state.regions.getRegions().forEach(r => r.remove())
     track.state.regions.disableDragSelection()
     track.state.toolbar = { visible: false, left: 0, region: null }
