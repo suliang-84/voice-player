@@ -602,15 +602,168 @@ function toggleSkipSilence(track) {
   }
 }
 
-// ── 占位函数（Task 7-9 实现） ───────────────────────────────────────────
-function toggleRegionMode(_track) {}
+// ── 选区与浮动工具条 ─────────────────────────────────────────────────────
+function toggleRegionMode(track) {
+  track.state.loopEnabled = !track.state.loopEnabled
+
+  if (track.state.loopEnabled) {
+    track.state.regions.enableDragSelection({
+      color: getComputedStyle(rootEl.value || document.body)
+        .getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)',
+    })
+
+    track.state.regions.on('region-created', (region) => {
+      // 保留最新一个选区
+      track.state.regions.getRegions().forEach(r => {
+        if (r.id !== region.id) r.remove()
+      })
+      updateToolbar(track, region)
+    })
+
+    track.state.regions.on('region-updated', (region) => {
+      updateToolbar(track, region)
+    })
+
+    track.state.regions.on('region-removed', () => {
+      track.state.toolbar = { visible: false, left: 0, region: null }
+      track.state.loopEnabled = false
+    })
+  } else {
+    track.state.regions.getRegions().forEach(r => r.remove())
+    track.state.regions.disableDragSelection()
+    track.state.toolbar = { visible: false, left: 0, region: null }
+  }
+}
+
+function updateToolbar(track, region) {
+  const wrap = wrapRefs[track.id]
+  if (!wrap) return
+  const W = wrap.getBoundingClientRect().width
+  const dur = track.state.duration || 1
+  const startX = (region.start / dur) * W
+  const endX = (region.end / dur) * W
+  track.state.toolbar = {
+    visible: true,
+    left: startX + (endX - startX) / 2,
+    region,
+  }
+}
+
+function playRegion(track) {
+  const region = track.state.toolbar.region
+  if (!region || !track.state.ws) return
+  track.state.ws.setTime(region.start)
+  track.state.ws.play()
+  track.state.isPlaying = true
+
+  const stopAtEnd = (time) => {
+    if (time >= region.end) {
+      track.state.ws.pause()
+      track.state.isPlaying = false
+      track.state.ws.un('timeupdate', stopAtEnd)
+    }
+  }
+  track.state.ws.on('timeupdate', stopAtEnd)
+}
+
+function loopRegion(track) {
+  // 切换循环模式（loopEnabled 已在 timeupdate 中处理）
+  track.state.loopEnabled = !track.state.loopEnabled
+}
+
+async function downloadRegion(track) {
+  const region = track.state.toolbar.region
+  if (!region) return
+  const url = track.state.objectUrl || track.config.src
+  if (!url) return
+
+  try {
+    const audioCtx = new AudioContext()
+    const arrayBuffer = await fetch(url).then(r => r.arrayBuffer())
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+
+    const startSample = Math.floor(region.start * audioBuffer.sampleRate)
+    const endSample = Math.floor(region.end * audioBuffer.sampleRate)
+    const length = endSample - startSample
+
+    const clipped = audioCtx.createBuffer(
+      audioBuffer.numberOfChannels,
+      length,
+      audioBuffer.sampleRate
+    )
+    for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+      clipped.copyToChannel(
+        audioBuffer.getChannelData(ch).slice(startSample, endSample),
+        ch
+      )
+    }
+
+    const wav = audioBufferToWav(clipped)
+    const blob = new Blob([wav], { type: 'audio/wav' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `clip_${region.start.toFixed(1)}-${region.end.toFixed(1)}.wav`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    audioCtx.close()
+  } catch (err) {
+    alert('下载选区失败：' + err.message)
+  }
+}
+
+function addAnnotation(track) {
+  const region = track.state.toolbar.region
+  if (!region) return
+  const note = prompt('添加批注（双击书签可删除）')
+  if (!note) return
+  const ann = {
+    id: Date.now().toString(),
+    start: region.start,
+    end: region.end,
+    note,
+  }
+  track.state.annotations.push(ann)
+  const key = track.config.src || track.config.file?.name
+  if (key) localStorage.setItem(`vp-annotations:${key}`, JSON.stringify(track.state.annotations))
+}
+
+function clearRegion(track) {
+  track.state.regions.getRegions().forEach(r => r.remove())
+  track.state.toolbar = { visible: false, left: 0, region: null }
+  track.state.loopEnabled = false
+}
+
+// ── WAV 编码 ────────────────────────────────────────────────────────────
+function audioBufferToWav(buffer) {
+  const numCh = buffer.numberOfChannels
+  const length = buffer.length * numCh * 2 + 44
+  const out = new ArrayBuffer(length)
+  const view = new DataView(out)
+  const writeStr = (o, s) => [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)))
+
+  writeStr(0, 'RIFF'); view.setUint32(4, length - 8, true)
+  writeStr(8, 'WAVE'); writeStr(12, 'fmt ')
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true)
+  view.setUint16(22, numCh, true)
+  view.setUint32(24, buffer.sampleRate, true)
+  view.setUint32(28, buffer.sampleRate * numCh * 2, true)
+  view.setUint16(32, numCh * 2, true); view.setUint16(34, 16, true)
+  writeStr(36, 'data'); view.setUint32(40, buffer.length * numCh * 2, true)
+
+  let offset = 44
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numCh; ch++) {
+      const s = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]))
+      view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true)
+      offset += 2
+    }
+  }
+  return out
+}
+
+// ── 占位函数（Task 8-9 实现） ───────────────────────────────────────────
 function exportReport(_track) {}
 function handleKeydown(_event, _track) {}
-function playRegion(_track) {}
-function loopRegion(_track) {}
-function downloadRegion(_track) {}
-function addAnnotation(_track) {}
-function clearRegion(_track) {}
 function removeBookmark(_track, _id) {}
 </script>
 
