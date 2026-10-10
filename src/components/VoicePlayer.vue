@@ -457,30 +457,86 @@ watch(() => props.trackB, async (newVal) => {
   }
 })
 
-// ── 占位函数（Task 5-9 实现） ───────────────────────────────────────────
-function togglePlay(_track) {}
-function toggleMute(_track) {}
-function setVolume(_track, _val) {}
-function cycleSpeed(_track) {}
+// ── 播放控制 ────────────────────────────────────────────────────────────
+function togglePlay(track) {
+  if (!track.state.ws) return
+  track.state.ws.playPause()
+  track.state.isPlaying = !track.state.isPlaying
+}
+
+function setVolume(track, val) {
+  const v = parseFloat(val)
+  track.state.volume = v
+  track.state.isMuted = v === 0
+  track.state.ws?.setVolume(v)
+}
+
+function toggleMute(track) {
+  if (track.state.isMuted) {
+    const v = track.state.volume || 0.8
+    track.state.ws?.setVolume(v)
+    track.state.isMuted = false
+  } else {
+    track.state.ws?.setVolume(0)
+    track.state.isMuted = true
+  }
+}
+
+function cycleSpeed(track) {
+  const idx = SPEEDS.indexOf(track.state.speed)
+  const next = SPEEDS[(idx + 1) % SPEEDS.length]
+  track.state.speed = next
+  track.state.ws?.setPlaybackRate(next)
+}
+
+function downloadAudio(track) {
+  const url = track.state.objectUrl || track.config.src
+  if (!url) return
+  const a = document.createElement('a')
+  a.href = url
+  a.download = track.config.file?.name || url.split('/').pop() || 'audio'
+  a.click()
+}
+
+// ── 工具函数 ────────────────────────────────────────────────────────────
+function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return '00:00'
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0')
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0')
+  return `${m}:${s}`
+}
+
+async function copyTime(track) {
+  const time = formatTime(track.state.currentTime)
+  try {
+    await navigator.clipboard.writeText(time)
+    track.state.timeCopied = true
+    setTimeout(() => { track.state.timeCopied = false }, 1500)
+  } catch (_) {}
+}
+
+// ── AB 音量差可视化 ─────────────────────────────────────────────────────
+const volumeDiffStyle = computed(() => {
+  const diff = Math.abs(stateA.volume - stateB.volume)
+  return {
+    width: (diff * 100) + '%',
+    background: diff > 0.3
+      ? 'var(--vp-diff-warn-color, #ef4444)'
+      : 'var(--vp-diff-ok-color, #22c55e)',
+  }
+})
+
+// ── 占位函数（Task 6-9 实现） ───────────────────────────────────────────
 function toggleRegionMode(_track) {}
 function toggleSkipSilence(_track) {}
 function exportReport(_track) {}
-function downloadAudio(_track) {}
 function handleKeydown(_event, _track) {}
-function copyTime(_track) {}
 function playRegion(_track) {}
 function loopRegion(_track) {}
 function downloadRegion(_track) {}
 function addAnnotation(_track) {}
 function clearRegion(_track) {}
 function removeBookmark(_track, _id) {}
-function formatTime(seconds) {
-  if (!seconds || isNaN(seconds)) return '0:00'
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60).toString().padStart(2, '0')
-  return `${m}:${s}`
-}
-const volumeDiffStyle = computed(() => ({ width: '0%', background: 'var(--vp-diff-ok-color)' }))
 </script>
 
 <style scoped>
