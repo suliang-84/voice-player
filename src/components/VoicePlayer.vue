@@ -291,6 +291,24 @@ async function initWaveSurfer(track) {
   state.regions = regions
   state.skipSilencePlugin = skipSilencePlugin
 
+  // ── 双击波形添加书签 ──────────────────────────────────────────────────
+  waveContainer.addEventListener('dblclick', (e) => {
+    if (!state.duration) return
+    const rect = waveContainer.getBoundingClientRect()
+    const time = ((e.clientX - rect.left) / rect.width) * state.duration
+    const label = prompt('书签名称', `标记 ${formatTime(time)}`)
+    if (label === null) return
+    addBookmark(track, { id: Date.now().toString(), time, label })
+  })
+
+  // ── 滚轮缩放 ──────────────────────────────────────────────────────────
+  waveContainer.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -10 : 10
+    state.zoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
+    ws.zoom(state.zoom)
+  }, { passive: false })
+
   // ── 镜像下半：用 requestAnimationFrame 持续 drawImage 复制像素 ──────
   if (isMirror) {
     ws.on('ready', () => {
@@ -778,10 +796,50 @@ function audioBufferToWav(buffer) {
   return out
 }
 
+// ── 键盘快捷键 ──────────────────────────────────────────────────────────
+function handleKeydown(e, track) {
+  if (!track.state.ws) return
+  switch (e.key) {
+    case ' ':
+      e.preventDefault()
+      togglePlay(track)
+      break
+    case 'ArrowLeft':
+      e.preventDefault()
+      track.state.ws.setTime(Math.max(0, track.state.currentTime - (e.shiftKey ? 1 : 5)))
+      break
+    case 'ArrowRight':
+      e.preventDefault()
+      track.state.ws.setTime(Math.min(track.state.duration, track.state.currentTime + (e.shiftKey ? 1 : 5)))
+      break
+    case '[': {
+      const r = track.state.toolbar.region
+      if (r) track.state.ws.setTime(r.start)
+      break
+    }
+    case ']': {
+      const r = track.state.toolbar.region
+      if (r) track.state.ws.setTime(r.end)
+      break
+    }
+  }
+}
+
+// ── 书签 ────────────────────────────────────────────────────────────────
+function addBookmark(track, bm) {
+  track.state.bookmarks.push(bm)
+  const key = track.config.src || track.config.file?.name
+  if (key) localStorage.setItem(`vp-bookmarks:${key}`, JSON.stringify(track.state.bookmarks))
+}
+
+function removeBookmark(track, id) {
+  track.state.bookmarks = track.state.bookmarks.filter(b => b.id !== id)
+  const key = track.config.src || track.config.file?.name
+  if (key) localStorage.setItem(`vp-bookmarks:${key}`, JSON.stringify(track.state.bookmarks))
+}
+
 // ── 占位函数（Task 8-9 实现） ───────────────────────────────────────────
 function exportReport(_track) {}
-function handleKeydown(_event, _track) {}
-function removeBookmark(_track, _id) {}
 </script>
 
 <style scoped>
