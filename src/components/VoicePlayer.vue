@@ -136,6 +136,9 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import WaveSurfer from 'wavesurfer.js'
+import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
+import SpectrogramPlugin from 'wavesurfer.js/dist/plugins/spectrogram.esm.js'
 
 // ── Props ──────────────────────────────────────────────────────────────────
 const props = defineProps({
@@ -197,6 +200,165 @@ const wrapRefs = {}
 function setWaveRef(el, id) { if (el) waveRefs[id] = el }
 function setMirrorRef(el, id) { if (el) mirrorRefs[id] = el }
 function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
+
+// ── 频谱图颜色映射 ─────────────────────────────────────────────────────
+function buildColorMap(colorMap) {
+  const root = rootEl.value
+  if (colorMap === 'theme' || !colorMap) {
+    const base = root
+      ? getComputedStyle(root).getPropertyValue('--vp-progress-color').trim()
+      : '#2563eb'
+    // 返回 256 色阶数组（WaveSurfer SpectrogramPlugin 需要此格式）
+    return Array.from({ length: 256 }, (_, i) => {
+      const alpha = Math.round((i / 255) * 255).toString(16).padStart(2, '0')
+      return base.startsWith('#') && base.length === 7
+        ? base + alpha
+        : `rgba(37,99,235,${(i / 255).toFixed(3)})`
+    })
+  }
+  if (colorMap === 'heatmap') {
+    return Array.from({ length: 256 }, (_, i) => {
+      const h = Math.round((1 - i / 255) * 240)
+      return `hsl(${h},100%,50%)`
+    })
+  }
+  // 自定义颜色字符串
+  return Array.from({ length: 256 }, (_, i) => {
+    const alpha = i.toString(16).padStart(2, '0')
+    return colorMap.startsWith('#') && colorMap.length === 7
+      ? colorMap + alpha
+      : `rgba(37,99,235,${(i / 255).toFixed(3)})`
+  })
+}
+
+// ── WaveSurfer 初始化 ──────────────────────────────────────────────────
+async function initWaveSurfer(track) {
+  const { config, state } = track
+  const waveContainer = waveRefs[track.id]
+  if (!waveContainer) return
+
+  const opt = props.options || {}
+  const waveformType = opt.waveformType ?? 'mirror-bar'
+  const isMirror = waveformType.startsWith('mirror-')
+  const isSpectrogram = waveformType === 'mirror-spectrogram'
+
+  // ── 构建插件列表 ────────────────────────────────────────────────────
+  const regions = RegionsPlugin.create()
+  const plugins = [regions]
+
+  let spectrogramPlugin = null
+  if (isSpectrogram) {
+    spectrogramPlugin = SpectrogramPlugin.create({
+      colorMap: buildColorMap(opt.spectrogramColorMap),
+      fftSamples: opt.fftSize ?? 2048,
+      height: (opt.height ?? 80),
+    })
+    plugins.push(spectrogramPlugin)
+  }
+
+  // SkipSilencePlugin not available in wavesurfer.js 7.x — handled in Task 6
+  const skipSilencePlugin = null
+
+  // ── 创建 WaveSurfer 实例 ────────────────────────────────────────────
+  const ws = WaveSurfer.create({
+    container: waveContainer,
+    waveColor: opt.waveColor
+      || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-wave-color').trim() : '')
+      || '#93c5fd',
+    progressColor: opt.progressColor
+      || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-progress-color').trim() : '')
+      || '#2563eb',
+    cursorColor: opt.cursorColor
+      || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '')
+      || '#1d4ed8',
+    barWidth: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barWidth ?? 2) : undefined,
+    barGap: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barGap ?? 1) : undefined,
+    height: opt.height ?? 80,
+    plugins,
+  })
+
+  state.ws = ws
+  state.regions = regions
+  state.skipSilencePlugin = skipSilencePlugin
+
+  // ── 镜像下半：克隆 WaveSurfer canvas 到 mirror div ─────────────────
+  if (isMirror) {
+    ws.on('ready', () => {
+      const mirrorDiv = mirrorRefs[track.id]
+      if (!mirrorDiv) return
+      mirrorDiv.innerHTML = ''
+      const sourceCanvas = waveContainer.querySelector('canvas')
+      if (sourceCanvas) {
+        const clone = sourceCanvas.cloneNode(true)
+        mirrorDiv.appendChild(clone)
+      }
+    })
+    // 进度更新时同步镜像
+    ws.on('timeupdate', () => {
+      const mirrorDiv = mirrorRefs[track.id]
+      if (!mirrorDiv) return
+      mirrorDiv.innerHTML = ''
+      const sourceCanvas = waveContainer.querySelector('canvas')
+      if (sourceCanvas) {
+        const clone = sourceCanvas.cloneNode(true)
+        mirrorDiv.appendChild(clone)
+      }
+    })
+  }
+
+  // loadAudio(track) called in Task 4
+}
+
+// ── 生命周期 ────────────────────────────────────────────────────────────
+onMounted(async () => {
+  await nextTick()
+  for (const track of tracks.value) {
+    await initWaveSurfer(track)
+  }
+})
+
+onBeforeUnmount(() => {
+  for (const track of tracks.value) {
+    track.state.ws?.destroy()
+    if (track.state.objectUrl) {
+      URL.revokeObjectURL(track.state.objectUrl)
+    }
+  }
+})
+
+// trackB 动态变化时初始化
+watch(() => props.trackB, async (newVal) => {
+  if (newVal && !stateB.ws) {
+    await nextTick()
+    await initWaveSurfer({ id: 'B', config: newVal, state: stateB })
+  }
+})
+
+// ── 占位函数（Task 4-9 实现） ───────────────────────────────────────────
+function retryLoad(_track) {}
+function togglePlay(_track) {}
+function toggleMute(_track) {}
+function setVolume(_track, _val) {}
+function cycleSpeed(_track) {}
+function toggleRegionMode(_track) {}
+function toggleSkipSilence(_track) {}
+function exportReport(_track) {}
+function downloadAudio(_track) {}
+function handleKeydown(_event, _track) {}
+function copyTime(_track) {}
+function playRegion(_track) {}
+function loopRegion(_track) {}
+function downloadRegion(_track) {}
+function addAnnotation(_track) {}
+function clearRegion(_track) {}
+function removeBookmark(_track, _id) {}
+function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return '0:00'
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0')
+  return `${m}:${s}`
+}
+const volumeDiffStyle = computed(() => ({ width: '0%', background: 'var(--vp-diff-ok-color)' }))
 </script>
 
 <style scoped>
