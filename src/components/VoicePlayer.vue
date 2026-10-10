@@ -361,6 +361,10 @@ async function loadAudio(track) {
         try { state.annotations = JSON.parse(savedAnn) } catch (_) {}
       }
     }
+    // 标准模式：启动 Web Audio API 静音检测（peaks 模式用 timeupdate 区间跳转）
+    if (!config.silences && state.skipSilence) {
+      startSilenceDetection(track)
+    }
   })
 
   ws.on('error', (err) => {
@@ -437,6 +441,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   for (const track of tracks.value) {
+    // 停止静音检测
+    stopSilenceDetection(track)
     // 停止镜像 rAF 循环
     if (mirrorRafIds[track.id]) {
       cancelAnimationFrame(mirrorRafIds[track.id])
@@ -526,9 +532,78 @@ const volumeDiffStyle = computed(() => {
   }
 })
 
-// ── 占位函数（Task 6-9 实现） ───────────────────────────────────────────
+// ── 跳过空音 ────────────────────────────────────────────────────────────
+// Store analyser nodes per track
+const analyserNodes = {}
+const silenceTimers = {}
+
+function startSilenceDetection(track) {
+  if (!track.state.ws) return
+  const mediaEl = track.state.ws.getMediaElement()
+  if (!mediaEl) return
+
+  const audioCtx = new AudioContext()
+  const source = audioCtx.createMediaElementSource(mediaEl)
+  const analyser = audioCtx.createAnalyser()
+  analyser.fftSize = 512
+  source.connect(analyser)
+  source.connect(audioCtx.destination)  // still play audio
+
+  analyserNodes[track.id] = { audioCtx, analyser }
+
+  const dataArray = new Float32Array(analyser.fftSize)
+  let silenceStart = null
+  const THRESHOLD = 0.001
+  const MARGIN = 0.2
+
+  function checkSilence() {
+    if (!track.state.skipSilence || !track.state.isPlaying) {
+      silenceStart = null
+      silenceTimers[track.id] = requestAnimationFrame(checkSilence)
+      return
+    }
+    analyser.getFloatTimeDomainData(dataArray)
+    const rms = Math.sqrt(dataArray.reduce((s, v) => s + v * v, 0) / dataArray.length)
+
+    if (rms < THRESHOLD) {
+      if (silenceStart === null) silenceStart = track.state.currentTime
+      else if (track.state.currentTime - silenceStart > MARGIN) {
+        // Jump forward 0.5s to escape silence
+        const newTime = Math.min(track.state.duration, track.state.currentTime + 0.5)
+        track.state.ws.setTime(newTime)
+        silenceStart = null
+      }
+    } else {
+      silenceStart = null
+    }
+    silenceTimers[track.id] = requestAnimationFrame(checkSilence)
+  }
+  silenceTimers[track.id] = requestAnimationFrame(checkSilence)
+}
+
+function stopSilenceDetection(track) {
+  if (silenceTimers[track.id]) {
+    cancelAnimationFrame(silenceTimers[track.id])
+    delete silenceTimers[track.id]
+  }
+  if (analyserNodes[track.id]) {
+    analyserNodes[track.id].audioCtx.close()
+    delete analyserNodes[track.id]
+  }
+}
+
+function toggleSkipSilence(track) {
+  track.state.skipSilence = !track.state.skipSilence
+
+  if (track.state.skipSilence) {
+    startSilenceDetection(track)
+  } else {
+    stopSilenceDetection(track)
+  }
+}
+
+// ── 占位函数（Task 7-9 实现） ───────────────────────────────────────────
 function toggleRegionMode(_track) {}
-function toggleSkipSilence(_track) {}
 function exportReport(_track) {}
 function handleKeydown(_event, _track) {}
 function playRegion(_track) {}
