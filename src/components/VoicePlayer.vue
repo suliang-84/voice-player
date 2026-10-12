@@ -379,10 +379,7 @@ async function loadAudio(track) {
         try { state.annotations = JSON.parse(savedAnn) } catch (_) {}
       }
     }
-    // 标准模式：启动 Web Audio API 静音检测（peaks 模式用 timeupdate 区间跳转）
-    if (!config.silences && state.skipSilence) {
-      startSilenceDetection(track)
-    }
+    // 标准模式：静音检测在首次播放时懒初始化（需要用户手势才能让 AudioContext 以 running 状态启动）
   })
 
   ws.on('error', (err) => {
@@ -490,6 +487,10 @@ watch(() => props.trackB, async (newVal) => {
 // ── 播放控制 ────────────────────────────────────────────────────────────
 function togglePlay(track) {
   if (!track.state.ws) return
+  // 首次播放时在用户手势内懒创建 AudioContext（保证以 running 状态启动，避免挂起导致音频路由失效）
+  if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
+    startSilenceDetection(track)
+  }
   track.state.ws.playPause()
   track.state.isPlaying = !track.state.isPlaying
 }

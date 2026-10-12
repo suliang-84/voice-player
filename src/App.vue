@@ -56,7 +56,7 @@
 import { ref } from 'vue'
 import VoicePlayer from './components/VoicePlayer.vue'
 
-const AUDIO_URL = 'https://www.w3schools.com/html/horse.ogg'
+const AUDIO_URL = '/demo.mp3'
 
 const fileTrackA = ref(null)
 function onFileA(e) {
