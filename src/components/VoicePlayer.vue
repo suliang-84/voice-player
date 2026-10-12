@@ -25,24 +25,19 @@
       <button class="vp-btn" @click="exportReportBoth" title="合并导出两路标注">📄</button>
       <!-- 下载全部 -->
       <button class="vp-btn" @click="downloadBoth" title="下载全部">↓ 下载全部</button>
-      <!-- AB 时间同步 -->
-      <button
-        class="vp-btn"
-        :class="{ 'vp-btn--active': syncAB }"
-        @click="syncAB = !syncAB"
-        title="AB 路时间同步"
-      >AB 同步</button>
     </div>
 
     <!-- 轨道列表 -->
+    <div :class="props.trackB ? 'vp-tracks-dual' : null">
     <div
       v-for="track in tracks"
       :key="track.id"
       class="vp-track"
+      :class="{ 'vp-track--dual': props.trackB }"
       tabindex="0"
       @keydown="handleKeydown($event, track)"
     >
-      <!-- 头部：标签 + 加载状态/错误 -->
+      <!-- 头部：标签 + 控制栏 -->
       <div class="vp-track-header">
         <span class="vp-label">{{ track.config.label || `${track.id}路` }}</span>
         <div class="vp-header-right">
@@ -53,6 +48,48 @@
           <span v-else-if="track.state.isLoading" class="vp-loading-text">
             加载中 {{ track.state.loadProgress }}%
           </span>
+
+          <button v-if="!props.trackB" class="vp-btn vp-play-btn" @click="togglePlay(track)">
+            {{ track.state.isPlaying ? '⏸' : '▶' }}
+          </button>
+
+          <span
+            class="vp-time"
+            @click="copyTime(track)"
+            :title="track.state.timeCopied ? '已复制！' : '点击复制时间'"
+          >
+            {{ track.state.timeCopied ? '已复制' : formatTime(track.state.currentTime) }}
+            / {{ formatTime(track.state.duration) }}
+          </span>
+
+          <template v-if="!props.trackB">
+            <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
+              {{ track.state.isMuted ? '🔇' : '🔊' }}
+            </button>
+            <input
+              type="range" min="0" max="1" step="0.01"
+              :value="track.state.isMuted ? 0 : track.state.volume"
+              class="vp-slider vp-volume-slider"
+              @input="setVolume(track, $event.target.value)"
+            />
+          </template>
+
+          <button
+            class="vp-btn"
+            :class="{ 'vp-btn--active': track.state.loopEnabled }"
+            @click="toggleRegionMode(track)"
+            title="拖拽选区"
+          >⟳</button>
+
+          <button
+            class="vp-btn"
+            :class="{ 'vp-btn--active': track.state.skipSilence }"
+            @click="toggleSkipSilence(track)"
+            title="跳过空音"
+          >静</button>
+
+          <button class="vp-btn" @click="exportReport(track)" title="导出标注报告">📄</button>
+          <button class="vp-btn" @click="downloadAudio(track)" title="下载音频">↓</button>
         </div>
       </div>
 
@@ -99,59 +136,9 @@
         <div :ref="el => setMirrorRef(el, track.id)" class="vp-waveform-mirror"></div>
       </div>
 
-      <!-- 控制栏 -->
-      <div class="vp-controls">
-        <button v-if="!props.trackB" class="vp-btn vp-play-btn" @click="togglePlay(track)">
-          {{ track.state.isPlaying ? '⏸' : '▶' }}
-        </button>
-
-        <span
-          class="vp-time"
-          @click="copyTime(track)"
-          :title="track.state.timeCopied ? '已复制！' : '点击复制时间'"
-        >
-          {{ track.state.timeCopied ? '已复制' : formatTime(track.state.currentTime) }}
-          / {{ formatTime(track.state.duration) }}
-        </span>
-
-        <template v-if="!props.trackB">
-          <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
-            {{ track.state.isMuted ? '🔇' : '🔊' }}
-          </button>
-          <input
-            type="range" min="0" max="1" step="0.01"
-            :value="track.state.isMuted ? 0 : track.state.volume"
-            class="vp-slider vp-volume-slider"
-            @input="setVolume(track, $event.target.value)"
-          />
-        </template>
-
-        <button
-          class="vp-btn"
-          :class="{ 'vp-btn--active': track.state.loopEnabled }"
-          @click="toggleRegionMode(track)"
-          title="拖拽选区"
-        >⟳</button>
-
-        <button
-          class="vp-btn"
-          :class="{ 'vp-btn--active': track.state.skipSilence }"
-          @click="toggleSkipSilence(track)"
-          title="跳过空音"
-        >静</button>
-
-        <button class="vp-btn" @click="exportReport(track)" title="导出标注报告">📄</button>
-        <button class="vp-btn" @click="downloadAudio(track)" title="下载音频">↓</button>
-      </div>
     </div>
+    </div><!-- end vp-tracks-dual wrapper -->
 
-    <!-- AB 音量差（双轨模式） -->
-    <div v-if="props.trackB" class="vp-volume-diff">
-      <span class="vp-volume-diff-label">音量差</span>
-      <div class="vp-volume-diff-track">
-        <div class="vp-volume-diff-bar" :style="volumeDiffStyle"></div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -174,8 +161,8 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 // ── 根元素 ref ─────────────────────────────────────────────────────────────
 const rootEl = ref(null)
 
-// ── AB 同步开关 ────────────────────────────────────────────────────────────
-const syncAB = ref(false)
+// ── AB 进度同步（双轨模式始终强制双向同步，用 flag 防止循环触发） ───────────────
+let _syncingAB = false
 
 // ── 轨道状态工厂 ───────────────────────────────────────────────────────────
 function createTrackState(id) {
@@ -419,9 +406,14 @@ async function loadAudio(track) {
       if (silent) ws.setTime(silent.end)
     }
 
-    // AB 同步
-    if (track.id === 'A' && syncAB.value && stateB.ws && !stateB.isPlaying) {
-      stateB.ws.setTime(time)
+    // 双轨模式：双向强制同步进度（_syncingAB 防止循环触发）
+    if (props.trackB && !_syncingAB) {
+      const other = track.id === 'A' ? stateB : stateA
+      if (other.ws) {
+        _syncingAB = true
+        other.ws.setTime(time)
+        _syncingAB = false
+      }
     }
 
     // 区间循环
@@ -651,16 +643,6 @@ async function copyTime(track) {
   } catch (_) {}
 }
 
-// ── AB 音量差可视化 ─────────────────────────────────────────────────────
-const volumeDiffStyle = computed(() => {
-  const diff = Math.abs(stateA.volume - stateB.volume)
-  return {
-    width: (diff * 100) + '%',
-    background: diff > 0.3
-      ? 'var(--vp-diff-warn-color, #ef4444)'
-      : 'var(--vp-diff-ok-color, #22c55e)',
-  }
-})
 
 // ── 跳过空音 ────────────────────────────────────────────────────────────
 // Store analyser nodes per track
@@ -983,8 +965,6 @@ function exportReport(track) {
   --vp-bookmark-color: #f59e0b;
   --vp-error-color: #ef4444;
   --vp-progress-bar-color: #2563eb;
-  --vp-diff-ok-color: #22c55e;
-  --vp-diff-warn-color: #ef4444;
 
   background: var(--vp-bg);
   border-radius: var(--vp-radius);
@@ -1016,6 +996,16 @@ function exportReport(track) {
   outline: none;
 }
 .vp-track:focus-within { border-color: var(--vp-btn-color); }
+
+/* 双轨模式：轨道包裹层无间隙，轨道无边框 */
+.vp-tracks-dual {
+  display: flex;
+  flex-direction: column;
+}
+.vp-track--dual {
+  border: none;
+  border-radius: 0;
+}
 
 /* ── 头部 ────────────────────────────────────────────────────────────── */
 .vp-track-header {
@@ -1122,13 +1112,6 @@ function exportReport(track) {
 .vp-bookmark:hover .vp-bookmark-label { opacity: 1; }
 
 /* ── 控制栏 ──────────────────────────────────────────────────────────── */
-.vp-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 /* ── 通用按钮 ────────────────────────────────────────────────────────── */
 .vp-btn {
   background: none;
@@ -1176,20 +1159,4 @@ function exportReport(track) {
   cursor: pointer;
 }
 
-/* ── AB 音量差 ───────────────────────────────────────────────────────── */
-.vp-volume-diff {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-}
-.vp-volume-diff-label { font-size: 11px; color: var(--vp-time-color); white-space: nowrap; }
-.vp-volume-diff-track {
-  flex: 1;
-  height: 4px;
-  background: var(--vp-border-color);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.vp-volume-diff-bar { height: 100%; border-radius: 2px; transition: width 0.3s, background 0.3s; }
 </style>
