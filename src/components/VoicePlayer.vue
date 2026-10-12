@@ -99,8 +99,6 @@
           class="vp-region-toolbar"
           :style="{ left: track.state.toolbar.left + 'px' }"
         >
-          <button @click="playRegion(track)" title="播放选区">▶</button>
-          <button @click="loopRegion(track)" :class="{ 'vp-btn--active': track.state.loopEnabled }" title="循环选区">⟳</button>
           <button @click="downloadRegion(track)" title="下载选区">↓</button>
           <button @click="addAnnotation(track)" title="添加批注">✎</button>
           <button @click="clearRegion(track)" title="清除选区">✕</button>
@@ -457,10 +455,18 @@ async function loadAudio(track) {
       }
     }
 
-    // 区间循环
-    if (state.loopEnabled && state.toolbar.region) {
+    // 选区播放：到达区域末尾暂停；循环模式则跳回起点
+    if (state.toolbar.region) {
       const region = state.toolbar.region
-      if (time >= region.end) ws.setTime(region.start)
+      if (time >= region.end) {
+        if (state.loopEnabled) {
+          ws.setTime(region.start)
+        } else {
+          ws.pause()
+          state.isPlaying = false
+          // 停在终点，不跳回起点
+        }
+      }
     }
   })
 
@@ -566,6 +572,12 @@ function togglePlayBoth() {
       track.state.ws.pause()
       track.state.isPlaying = false
     } else if (!playing && !track.state.isPlaying) {
+      if (track.state.toolbar.region) {
+        const region = track.state.toolbar.region
+        if (track.state.currentTime >= region.end) {
+          track.state.ws.setTime(region.start)
+        }
+      }
       track.state.ws.play()
       track.state.isPlaying = true
     }
@@ -628,6 +640,13 @@ function togglePlay(track) {
   // 首次播放时在用户手势内懒创建 AudioContext（保证以 running 状态启动，避免挂起导致音频路由失效）
   if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
     startSilenceDetection(track)
+  }
+  if (!track.state.isPlaying && track.state.toolbar.region) {
+    const region = track.state.toolbar.region
+    // 进度在终点或之后时，从起点重新播放；否则从当前位置继续
+    if (track.state.currentTime >= region.end) {
+      track.state.ws.setTime(region.start)
+    }
   }
   track.state.ws.playPause()
   track.state.isPlaying = !track.state.isPlaying
