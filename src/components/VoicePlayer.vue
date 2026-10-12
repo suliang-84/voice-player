@@ -1,8 +1,31 @@
 <!-- src/components/VoicePlayer.vue -->
 <template>
   <div class="voice-player" ref="rootEl">
-    <!-- AB 路同步按钮（仅双轨时显示） -->
+    <!-- AB 路全局控制条（仅双轨时显示） -->
     <div v-if="props.trackB" class="vp-sync-bar">
+      <!-- 全局播放/暂停 -->
+      <button class="vp-btn" @click="togglePlayBoth" :title="bothPlaying ? '暂停全部' : '播放全部'">
+        {{ bothPlaying ? '⏸' : '▶' }} {{ bothPlaying ? '暂停全部' : '播放全部' }}
+      </button>
+      <!-- AB 全局音量控制 -->
+      <button class="vp-btn" @click="toggleMuteBoth" :title="bothMuted ? '取消静音' : '全部静音'">
+        {{ bothMuted ? '🔇' : '🔊' }}
+      </button>
+      <input
+        type="range" min="0" max="1" step="0.01"
+        :value="bothMuted ? 0 : abVolume"
+        class="vp-slider vp-ab-volume-slider"
+        @input="setVolumeBoth($event.target.value)"
+      />
+      <!-- AB 播放速度 -->
+      <button class="vp-btn vp-speed-btn" @click="cycleSpeedBoth" title="播放速度（两路同步）">
+        {{ abSpeed }}x
+      </button>
+      <!-- 合并导出标注 -->
+      <button class="vp-btn" @click="exportReportBoth" title="合并导出两路标注">📄</button>
+      <!-- 下载全部 -->
+      <button class="vp-btn" @click="downloadBoth" title="下载全部">↓ 下载全部</button>
+      <!-- AB 时间同步 -->
       <button
         class="vp-btn"
         :class="{ 'vp-btn--active': syncAB }"
@@ -78,7 +101,7 @@
 
       <!-- 控制栏 -->
       <div class="vp-controls">
-        <button class="vp-btn vp-play-btn" @click="togglePlay(track)">
+        <button v-if="!props.trackB" class="vp-btn vp-play-btn" @click="togglePlay(track)">
           {{ track.state.isPlaying ? '⏸' : '▶' }}
         </button>
 
@@ -91,19 +114,17 @@
           / {{ formatTime(track.state.duration) }}
         </span>
 
-        <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
-          {{ track.state.isMuted ? '🔇' : '🔊' }}
-        </button>
-        <input
-          type="range" min="0" max="1" step="0.01"
-          :value="track.state.isMuted ? 0 : track.state.volume"
-          class="vp-slider vp-volume-slider"
-          @input="setVolume(track, $event.target.value)"
-        />
-
-        <button class="vp-btn vp-speed-btn" @click="cycleSpeed(track)" title="播放速度">
-          {{ track.state.speed }}x
-        </button>
+        <template v-if="!props.trackB">
+          <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
+            {{ track.state.isMuted ? '🔇' : '🔊' }}
+          </button>
+          <input
+            type="range" min="0" max="1" step="0.01"
+            :value="track.state.isMuted ? 0 : track.state.volume"
+            class="vp-slider vp-volume-slider"
+            @input="setVolume(track, $event.target.value)"
+          />
+        </template>
 
         <button
           class="vp-btn"
@@ -483,6 +504,90 @@ watch(() => props.trackB, async (newVal) => {
     await initWaveSurfer({ id: 'B', config: newVal, state: stateB })
   }
 })
+
+// ── AB 全局控制 ──────────────────────────────────────────────────────────
+const bothPlaying = computed(() => stateA.isPlaying || stateB.isPlaying)
+const bothMuted = computed(() => stateA.isMuted && stateB.isMuted)
+const abVolume = ref(1)
+const abSpeed = ref(1)
+
+function setVolumeBoth(val) {
+  const v = parseFloat(val)
+  abVolume.value = v
+  for (const track of tracks.value) {
+    if (!track.state.ws) continue
+    track.state.volume = v
+    track.state.isMuted = v === 0
+    track.state.ws.setVolume(v)
+  }
+}
+
+function togglePlayBoth() {
+  const playing = bothPlaying.value
+  for (const track of tracks.value) {
+    if (!track.state.ws) continue
+    if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
+      startSilenceDetection(track)
+    }
+    if (playing && track.state.isPlaying) {
+      track.state.ws.pause()
+      track.state.isPlaying = false
+    } else if (!playing && !track.state.isPlaying) {
+      track.state.ws.play()
+      track.state.isPlaying = true
+    }
+  }
+}
+
+function toggleMuteBoth() {
+  const mute = !bothMuted.value
+  for (const track of tracks.value) {
+    if (!track.state.ws) continue
+    if (mute) {
+      track.state.ws.setVolume(0)
+      track.state.isMuted = true
+    } else {
+      const v = track.state.volume || 0.8
+      track.state.ws.setVolume(v)
+      track.state.isMuted = false
+    }
+  }
+}
+
+function cycleSpeedBoth() {
+  const idx = SPEEDS.indexOf(abSpeed.value)
+  const next = SPEEDS[(idx + 1) % SPEEDS.length]
+  abSpeed.value = next
+  for (const track of tracks.value) {
+    track.state.speed = next
+    track.state.ws?.setPlaybackRate(next)
+  }
+}
+
+function exportReportBoth() {
+  const report = {
+    exportedAt: new Date().toISOString(),
+    tracks: tracks.value.map(track => ({
+      id: track.id,
+      audio: track.config.src || track.config.file?.name || 'unknown',
+      duration: track.state.duration,
+      bookmarks: track.state.bookmarks,
+      annotations: track.state.annotations,
+    })),
+  }
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `report_AB_${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function downloadBoth() {
+  for (const track of tracks.value) {
+    downloadAudio(track)
+  }
+}
 
 // ── 播放控制 ────────────────────────────────────────────────────────────
 function togglePlay(track) {
@@ -894,7 +999,11 @@ function exportReport(track) {
 .vp-sync-bar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
+.vp-ab-volume-slider { width: 90px; }
 
 /* ── 轨道 ────────────────────────────────────────────────────────────── */
 .vp-track {
