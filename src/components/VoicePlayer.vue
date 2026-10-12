@@ -154,8 +154,8 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 // ── 根元素 ref ─────────────────────────────────────────────────────────────
 const rootEl = ref(null)
 
-// ── AB 进度同步（双轨模式始终强制双向同步，用 flag 防止循环触发） ───────────────
-let _syncingAB = false
+// ── AB 进度同步（每轨独立跳过标志，防止 setTime 异步事件乒乓） ─────────────────
+const _skipABSync = { A: false, B: false }
 
 // ── 轨道状态工厂 ───────────────────────────────────────────────────────────
 function createTrackState(id) {
@@ -436,13 +436,24 @@ async function loadAudio(track) {
       if (silent) ws.setTime(silent.end)
     }
 
-    // 双轨模式：双向强制同步进度（_syncingAB 防止循环触发）
-    if (props.trackB && !_syncingAB) {
-      const other = track.id === 'A' ? stateB : stateA
-      if (other.ws) {
-        _syncingAB = true
-        other.ws.setTime(time)
-        _syncingAB = false
+    // 双轨模式：进度同步
+    if (props.trackB) {
+      if (_skipABSync[track.id]) {
+        // 本次是对方 setTime 触发的，跳过以防乒乓
+        _skipABSync[track.id] = false
+      } else {
+        const otherId = track.id === 'A' ? 'B' : 'A'
+        const other = track.id === 'A' ? stateB : stateA
+        if (other.ws) {
+          const drift = Math.abs(other.currentTime - time)
+          // 双方都在播放时：仅漂移 > 0.3s 才纠偏，避免频繁 seek 打断平滑播放
+          // 任一方暂停时：精确同步（用户主动跳转）
+          const bothPlaying = state.isPlaying && other.isPlaying
+          if (!bothPlaying || drift > 0.3) {
+            _skipABSync[otherId] = true
+            other.ws.setTime(time)
+          }
+        }
       }
     }
 
