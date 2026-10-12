@@ -76,13 +76,6 @@
 
           <button
             class="vp-btn"
-            :class="{ 'vp-btn--active': track.state.loopEnabled }"
-            @click="toggleRegionMode(track)"
-            title="拖拽选区"
-          >⟳</button>
-
-          <button
-            class="vp-btn"
             :class="{ 'vp-btn--active': track.state.skipSilence }"
             @click="toggleSkipSilence(track)"
             title="跳过空音"
@@ -292,12 +285,24 @@ async function initWaveSurfer(track) {
     barWidth: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barWidth ?? 2) : undefined,
     barGap: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barGap ?? 1) : undefined,
     height: opt.height ?? 80,
+    interact: false,  // 禁用内置 click-to-seek，由下方手动判断点击/拖拽
     plugins,
   })
 
   state.ws = ws
   state.regions = regions
   state.skipSilencePlugin = skipSilencePlugin
+
+  // ── 点击 seek（区分点击与拖拽：移动 < 5px 才 seek）─────────────────────
+  let _mouseDownX = 0
+  waveContainer.addEventListener('mousedown', (e) => { _mouseDownX = e.clientX })
+  waveContainer.addEventListener('mouseup', (e) => {
+    if (Math.abs(e.clientX - _mouseDownX) >= 5) return  // 拖拽，跳过 seek
+    if (!state.duration) return
+    const rect = waveContainer.getBoundingClientRect()
+    const progress = (e.clientX - rect.left) / rect.width
+    ws.seekTo(Math.max(0, Math.min(1, progress)))
+  })
 
   // ── 双击波形添加书签 ──────────────────────────────────────────────────
   waveContainer.addEventListener('dblclick', (e) => {
@@ -388,6 +393,31 @@ async function loadAudio(track) {
       }
     }
     // 标准模式：静音检测在首次播放时懒初始化（需要用户手势才能让 AudioContext 以 running 状态启动）
+
+    // 始终启用拖拽选区（无需开关按钮）
+    state.regions.enableDragSelection({
+      color: rootEl.value
+        ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)'
+        : 'rgba(37,99,235,0.2)',
+    })
+    const unsubCreated = state.regions.on('region-created', (region) => {
+      state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
+      updateToolbar(track, region)
+      ws.setTime(region.start)
+      if (!_syncingRegion) syncRegionToOther(track, region)
+    })
+    const unsubUpdated = state.regions.on('region-updated', (region) => {
+      updateToolbar(track, region)
+      syncRegionToOther(track, region)
+    })
+    const unsubRemoved = state.regions.on('region-removed', () => {
+      // 同步中或还有选区时不清空 toolbar
+      if (_syncingRegion) return
+      if (state.regions.getRegions().length === 0) {
+        state.toolbar = { visible: false, left: 0, region: null }
+      }
+    })
+    regionListeners[track.id] = [unsubCreated, unsubUpdated, unsubRemoved]
   })
 
   ws.on('error', (err) => {
@@ -652,6 +682,29 @@ const silenceTimers = {}
 // ── 选区事件监听器管理 ──────────────────────────────────────────────────
 // Store unsubscribe functions per track to prevent listener accumulation
 const regionListeners = {}
+let _syncingRegion = false
+
+function syncRegionToOther(track, region) {
+  if (!props.trackB || _syncingRegion) return
+  const otherState = track.id === 'A' ? stateB : stateA
+  if (!otherState.regions) return
+  _syncingRegion = true
+  // 清除对方旧选区，新建同范围选区
+  otherState.regions.getRegions().forEach(r => r.remove())
+  const newRegion = otherState.regions.addRegion({
+    start: region.start,
+    end: region.end,
+    color: rootEl.value
+      ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)'
+      : 'rgba(37,99,235,0.2)',
+    drag: false,
+    resize: false,
+  })
+  _syncingRegion = false
+  // 用 addRegion 返回值直接更新对方 toolbar，不依赖事件链时序
+  const otherTrack = tracks.value.find(t => t.id !== track.id)
+  if (otherTrack && newRegion) updateToolbar(otherTrack, newRegion)
+}
 
 function startSilenceDetection(track) {
   // Guard: prevent duplicate AudioContext on same track
@@ -721,45 +774,6 @@ function toggleSkipSilence(track) {
 }
 
 // ── 选区与浮动工具条 ─────────────────────────────────────────────────────
-function toggleRegionMode(track) {
-  track.state.loopEnabled = !track.state.loopEnabled
-
-  if (track.state.loopEnabled) {
-    // Clean up any previous listeners first
-    if (regionListeners[track.id]) {
-      regionListeners[track.id].forEach(unsub => unsub?.())
-      delete regionListeners[track.id]
-    }
-
-    track.state.regions.enableDragSelection({
-      color: rootEl.value
-        ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)'
-        : 'rgba(37,99,235,0.2)',
-    })
-
-    const unsubCreated = track.state.regions.on('region-created', (region) => {
-      track.state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
-      updateToolbar(track, region)
-    })
-    const unsubUpdated = track.state.regions.on('region-updated', (region) => {
-      updateToolbar(track, region)
-    })
-    const unsubRemoved = track.state.regions.on('region-removed', () => {
-      track.state.toolbar = { visible: false, left: 0, region: null }
-      track.state.loopEnabled = false
-    })
-    regionListeners[track.id] = [unsubCreated, unsubUpdated, unsubRemoved]
-  } else {
-    // Clean up listeners
-    if (regionListeners[track.id]) {
-      regionListeners[track.id].forEach(unsub => unsub?.())
-      delete regionListeners[track.id]
-    }
-    track.state.regions.getRegions().forEach(r => r.remove())
-    track.state.regions.disableDragSelection()
-    track.state.toolbar = { visible: false, left: 0, region: null }
-  }
-}
 
 function updateToolbar(track, region) {
   const wrap = wrapRefs[track.id]
@@ -856,7 +870,12 @@ function addAnnotation(track) {
 function clearRegion(track) {
   track.state.regions.getRegions().forEach(r => r.remove())
   track.state.toolbar = { visible: false, left: 0, region: null }
-  track.state.loopEnabled = false
+  // 双轨模式同步清除对方选区
+  if (props.trackB) {
+    const otherState = track.id === 'A' ? stateB : stateA
+    otherState.regions?.getRegions().forEach(r => r.remove())
+    otherState.toolbar = { visible: false, left: 0, region: null }
+  }
 }
 
 // ── WAV 编码 ────────────────────────────────────────────────────────────
