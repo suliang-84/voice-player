@@ -205,7 +205,7 @@ function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
 
 // ── 选区颜色（按轨道 ID） ──────────────────────────────────────────────
 function regionColor(trackId) {
-  if (props.trackB) return trackId === 'A' ? 'rgba(44,145,228,0.3)' : 'rgba(15,171,157,0.3)'
+  if (props.trackB) return trackId === 'A' ? 'rgba(44,145,228,0.1)' : 'rgba(15,171,157,0.1)'
   return rootEl.value
     ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(99,102,241,0.15)'
     : 'rgba(99,102,241,0.15)'
@@ -364,6 +364,13 @@ async function loadAudio(track) {
     // 始终启用拖拽选区（无需开关按钮）
     state.regions.enableDragSelection({
       color: regionColor(track.id),
+    })
+    // region-initialized：拖拽开始时元素刚创建，此时清除 handle border
+    state.regions.on('region-initialized', (region) => {
+      if (region.element) {
+        region.element.querySelectorAll('[part~="region-handle-left"],[part~="region-handle-right"]')
+          .forEach(el => { el.style.borderLeft = 'none'; el.style.borderRight = 'none' })
+      }
     })
     const unsubCreated = state.regions.on('region-created', (region) => {
       state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
@@ -1067,12 +1074,6 @@ function exportReport(track) {
   position: relative;
   cursor: pointer;
   overflow: hidden;
-}
-/* 去除 RegionsPlugin handle 边线（part 为空格分隔值，用 ~= 匹配；border 为内联样式，需 !important 覆盖） */
-.vp-waveform-top :deep([part~="region-handle-left"]),
-.vp-waveform-top :deep([part~="region-handle-right"]) {
-  border: none !important;
-  background: transparent !important;
 }
 .vp-waveform-top { width: 100%; }
 .vp-waveform-mirror {
