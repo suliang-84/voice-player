@@ -203,6 +203,14 @@ function setWaveRef(el, id) { if (el) waveRefs[id] = el }
 function setMirrorRef(el, id) { if (el) mirrorRefs[id] = el }
 function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
 
+// ── 选区颜色（按轨道 ID） ──────────────────────────────────────────────
+function regionColor(trackId) {
+  if (props.trackB) return trackId === 'A' ? 'rgba(44,145,228,0.3)' : 'rgba(15,171,157,0.3)'
+  return rootEl.value
+    ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(99,102,241,0.15)'
+    : 'rgba(99,102,241,0.15)'
+}
+
 // ── WaveSurfer 初始化 ──────────────────────────────────────────────────
 async function initWaveSurfer(track) {
   const { config, state } = track
@@ -232,8 +240,9 @@ async function initWaveSurfer(track) {
         ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
         : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-progress-color').trim() : '') || '#6366f1'),
     cursorColor: opt.cursorColor
-      || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '')
-      || '#4f46e5',
+      || (props.trackB
+        ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
+        : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
     barWidth: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barWidth ?? 2) : undefined,
     barGap: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barGap ?? 1) : undefined,
     height: opt.height ?? 80,
@@ -354,9 +363,7 @@ async function loadAudio(track) {
 
     // 始终启用拖拽选区（无需开关按钮）
     state.regions.enableDragSelection({
-      color: rootEl.value
-        ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)'
-        : 'rgba(37,99,235,0.2)',
+      color: regionColor(track.id),
     })
     const unsubCreated = state.regions.on('region-created', (region) => {
       state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
@@ -699,9 +706,7 @@ function syncRegionToOther(track, region) {
   const newRegion = otherState.regions.addRegion({
     start: region.start,
     end: region.end,
-    color: rootEl.value
-      ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(37,99,235,0.2)'
-      : 'rgba(37,99,235,0.2)',
+    color: regionColor(otherState.id),
     drag: false,
     resize: false,
   })
@@ -1062,6 +1067,12 @@ function exportReport(track) {
   position: relative;
   cursor: pointer;
   overflow: hidden;
+}
+/* 去除 RegionsPlugin handle 边线（part 为空格分隔值，用 ~= 匹配；border 为内联样式，需 !important 覆盖） */
+.vp-waveform-top :deep([part~="region-handle-left"]),
+.vp-waveform-top :deep([part~="region-handle-right"]) {
+  border: none !important;
+  background: transparent !important;
 }
 .vp-waveform-top { width: 100%; }
 .vp-waveform-mirror {
