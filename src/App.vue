@@ -3,21 +3,6 @@
   <div style="max-width: 860px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 32px;">
     <h1 style="font-size: 20px; font-weight: 700; color: #111827">VoicePlayer Demo</h1>
 
-    <!-- 单轨 URL 模式（默认亮色主题） -->
-    <section>
-      <h2 style="font-size: 14px; color: #6b7280; margin-bottom: 8px">单轨 · 默认主题 · mirror-bar</h2>
-      <VoicePlayer
-        :track-a="{ src: AUDIO_URL, label: '主音频' }"
-      />
-    </section>
-
-    <!-- 单轨 File 上传 -->
-    <section>
-      <h2 style="font-size: 14px; color: #6b7280; margin-bottom: 8px">单轨 · 本地文件上传</h2>
-      <input type="file" accept="audio/*" @change="onFileA" style="margin-bottom: 8px; display: block;" />
-      <VoicePlayer v-if="fileTrackA" :track-a="fileTrackA" />
-    </section>
-
     <!-- 双轨 · 暗色主题 -->
     <section>
       <h2 style="font-size: 14px; color: #6b7280; margin-bottom: 8px">双轨 · 暗色主题</h2>
@@ -41,26 +26,11 @@
       />
     </section>
 
-    <!-- 频谱图模式 -->
-    <section>
-      <h2 style="font-size: 14px; color: #6b7280; margin-bottom: 8px">单轨 · 镜像频谱图（热力图配色）</h2>
-      <VoicePlayer
-        :track-a="{ src: AUDIO_URL, label: '频谱测试' }"
-        :options="{ waveformType: 'mirror-spectrogram', spectrogramColorMap: 'heatmap', height: 100 }"
-      />
-    </section>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
 import VoicePlayer from './components/VoicePlayer.vue'
 
 const AUDIO_URL = '/demo.mp3'
-
-const fileTrackA = ref(null)
-function onFileA(e) {
-  const file = e.target.files[0]
-  if (file) fileTrackA.value = { file, label: file.name }
-}
 </script>
