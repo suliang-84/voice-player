@@ -509,10 +509,15 @@ function togglePlayBoth() {
     // 开始播放前先对齐两轨起始位置
     const refTrack = tracks.value[0]
     if (refTrack?.state.ws) {
-      let startTime = refTrack.state.currentTime
-      if (refTrack.state.toolbar.region) {
-        const region = refTrack.state.toolbar.region
-        if (startTime >= region.end) startTime = region.start
+      const isEnded = refTrack.state.ws.getMediaElement()?.ended ?? false
+      const region = refTrack.state.toolbar.region
+      let startTime
+      if (isEnded) {
+        // 音频自然结束：从头（或选区起点）重播
+        startTime = region ? region.start : 0
+      } else {
+        startTime = refTrack.state.currentTime
+        if (region && startTime >= region.end) startTime = region.start
       }
       // 所有轨道对齐到同一起点，清除 regionEndLock
       for (const track of tracks.value) {
@@ -593,15 +598,25 @@ function togglePlay(track) {
   if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
     startSilenceDetection(track)
   }
-  if (!track.state.isPlaying && track.state.toolbar.region) {
-    const region = track.state.toolbar.region
-    if (track.state.currentTime >= region.end) {
+  if (track.state.isPlaying) {
+    track.state.ws.pause()
+    track.state.isPlaying = false
+    return
+  }
+  // 以底层 media.ended 为权威判断音频是否已播完，不依赖 currentTime 推断
+  const ended = track.state.ws.getMediaElement()?.ended ?? false
+  const atEnd = track.state.duration > 0 && track.state.currentTime >= track.state.duration - 0.1
+  const region = track.state.toolbar.region
+  if (region) {
+    if (ended || track.state.currentTime >= region.end) {
       track.state.ws.setTime(region.start)
     }
     _regionEndLock[track.id] = false
+  } else if (ended || atEnd) {
+    track.state.ws.setTime(0)
   }
-  track.state.ws.playPause()
-  track.state.isPlaying = !track.state.isPlaying
+  track.state.ws.play()
+  track.state.isPlaying = true
 }
 
 function setVolume(track, val) {
