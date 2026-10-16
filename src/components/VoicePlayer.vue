@@ -152,8 +152,9 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 // ── 根元素 ref ─────────────────────────────────────────────────────────────
 const rootEl = ref(null)
 
-// ── AB 进度同步（每轨独立跳过标志，防止 setTime 异步事件乒乓） ─────────────────
-const _skipABSync = { A: false, B: false }
+// ── AB 进度同步（仅用户主动 seek 时触发，播放中不干预） ─────────────────────────
+// 区域边界处理中的持久化锁（异步事件期间全程有效）
+const _regionEndLock = { A: false, B: false }
 
 // ── 轨道状态工厂 ───────────────────────────────────────────────────────────
 function createTrackState(id) {
@@ -298,8 +299,14 @@ async function initWaveSurfer(track) {
     if (Math.abs(e.clientX - _mouseDownX) >= 5) return  // 拖拽，跳过 seek
     if (!state.duration) return
     const rect = waveContainer.getBoundingClientRect()
-    const progress = (e.clientX - rect.left) / rect.width
-    ws.seekTo(Math.max(0, Math.min(1, progress)))
+    const progress = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    const newTime = progress * state.duration
+    ws.seekTo(progress)
+    // 用户主动 seek 时精确同步对方轨道
+    if (props.trackB) {
+      const other = track.id === 'A' ? stateB : stateA
+      if (other.ws) other.ws.setTime(newTime)
+    }
   })
 
   // ── 双击波形添加书签 ──────────────────────────────────────────────────
@@ -434,40 +441,24 @@ async function loadAudio(track) {
       if (silent) ws.setTime(silent.end)
     }
 
-    // 双轨模式：进度同步
-    if (props.trackB) {
-      if (_skipABSync[track.id]) {
-        // 本次是对方 setTime 触发的，跳过以防乒乓
-        _skipABSync[track.id] = false
-      } else {
-        const otherId = track.id === 'A' ? 'B' : 'A'
-        const other = track.id === 'A' ? stateB : stateA
-        if (other.ws) {
-          const drift = Math.abs(other.currentTime - time)
-          // 双方都在播放时：仅漂移 > 0.3s 才纠偏，避免频繁 seek 打断平滑播放
-          // 任一方暂停时：精确同步（用户主动跳转）
-          const bothPlaying = state.isPlaying && other.isPlaying
-          if (!bothPlaying || drift > 0.3) {
-            _skipABSync[otherId] = true
-            other.ws.setTime(time)
-          }
-        }
-      }
-    }
-
-    // 选区播放：到达区域末尾暂停；循环模式则跳回起点
-    if (state.toolbar.region) {
+    // 选区边界检测：用持久化锁防止异步事件重复触发
+    if (state.toolbar.region && !_regionEndLock[track.id]) {
       const region = state.toolbar.region
       if (time >= region.end) {
+        _regionEndLock[track.id] = true
         if (state.loopEnabled) {
+          ws.pause()
           ws.setTime(region.start)
+          ws.play().finally(() => { _regionEndLock[track.id] = false })
         } else {
           ws.pause()
           state.isPlaying = false
-          // 停在终点，不跳回起点
+          // 锁短暂保持，防止 pause 触发的 timeupdate 再次进入
+          setTimeout(() => { _regionEndLock[track.id] = false }, 200)
         }
       }
     }
+    // AB 同步已移至用户 seek 时触发，播放中不干预，保证进度条丝滑
   })
 
   // ── 解析 URL ──────────────────────────────────────────────────────────
@@ -563,6 +554,22 @@ function setVolumeBoth(val) {
 
 function togglePlayBoth() {
   const playing = bothPlaying.value
+  if (!playing) {
+    // 开始播放前先对齐两轨起始位置
+    const refTrack = tracks.value[0]
+    if (refTrack?.state.ws) {
+      let startTime = refTrack.state.currentTime
+      if (refTrack.state.toolbar.region) {
+        const region = refTrack.state.toolbar.region
+        if (startTime >= region.end) startTime = region.start
+      }
+      // 所有轨道对齐到同一起点，清除 regionEndLock
+      for (const track of tracks.value) {
+        _regionEndLock[track.id] = false
+        track.state.ws?.setTime(startTime)
+      }
+    }
+  }
   for (const track of tracks.value) {
     if (!track.state.ws) continue
     if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
@@ -572,12 +579,6 @@ function togglePlayBoth() {
       track.state.ws.pause()
       track.state.isPlaying = false
     } else if (!playing && !track.state.isPlaying) {
-      if (track.state.toolbar.region) {
-        const region = track.state.toolbar.region
-        if (track.state.currentTime >= region.end) {
-          track.state.ws.setTime(region.start)
-        }
-      }
       track.state.ws.play()
       track.state.isPlaying = true
     }
@@ -643,10 +644,10 @@ function togglePlay(track) {
   }
   if (!track.state.isPlaying && track.state.toolbar.region) {
     const region = track.state.toolbar.region
-    // 进度在终点或之后时，从起点重新播放；否则从当前位置继续
     if (track.state.currentTime >= region.end) {
       track.state.ws.setTime(region.start)
     }
+    _regionEndLock[track.id] = false
   }
   track.state.ws.playPause()
   track.state.isPlaying = !track.state.isPlaying
