@@ -177,6 +177,7 @@ function createTrackState(id) {
     skipSilencePlugin: null,
     objectUrl: null,
     toolbar: { visible: false, left: 0, region: null },
+    regionEnded: false,
     bookmarks: [],
     annotations: [],
   })
@@ -223,14 +224,16 @@ async function initWaveSurfer(track) {
   const ws = WaveSurfer.create({
     container: waveContainer,
     waveColor: opt.waveColor
-      || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-wave-color').trim() : '')
-      || '#93c5fd',
+      || (props.trackB
+        ? (track.id === 'A' ? '#bfdef7' : '#b7e6e1')
+        : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-wave-color').trim() : '') || '#bfdef7'),
     progressColor: opt.progressColor
-      || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-progress-color').trim() : '')
-      || '#2563eb',
+      || (props.trackB
+        ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
+        : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-progress-color').trim() : '') || '#6366f1'),
     cursorColor: opt.cursorColor
       || (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '')
-      || '#1d4ed8',
+      || '#4f46e5',
     barWidth: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barWidth ?? 2) : undefined,
     barGap: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barGap ?? 1) : undefined,
     height: opt.height ?? 80,
@@ -404,6 +407,7 @@ async function loadAudio(track) {
           ws.pause()
           ws.setTime(region.end)
           state.isPlaying = false
+          state.regionEnded = true
           // 锁短暂保持，防止 pause 触发的 timeupdate 再次进入
           setTimeout(() => { _regionEndLock[track.id] = false }, 200)
         }
@@ -505,39 +509,41 @@ function setVolumeBoth(val) {
 
 function togglePlayBoth() {
   const playing = bothPlaying.value
-  if (!playing) {
-    // 开始播放前先对齐两轨起始位置
-    const refTrack = tracks.value[0]
-    if (refTrack?.state.ws) {
-      const isEnded = refTrack.state.ws.getMediaElement()?.ended ?? false
-      const region = refTrack.state.toolbar.region
-      let startTime
-      if (isEnded) {
-        // 音频自然结束：从头（或选区起点）重播
-        startTime = region ? region.start : 0
-      } else {
-        startTime = refTrack.state.currentTime
-        if (region && startTime >= region.end) startTime = region.start
-      }
-      // 所有轨道对齐到同一起点，清除 regionEndLock
-      for (const track of tracks.value) {
-        _regionEndLock[track.id] = false
-        track.state.ws?.setTime(startTime)
-      }
+  if (playing) {
+    for (const track of tracks.value) {
+      if (!track.state.ws || !track.state.isPlaying) continue
+      track.state.ws.pause()
+      track.state.isPlaying = false
+    }
+    return
+  }
+
+  // 计算两轨共同起始位置
+  const refTrack = tracks.value[0]
+  let startTime = 0
+  if (refTrack?.state.ws) {
+    const isEnded = refTrack.state.ws.getMediaElement()?.ended ?? false
+    const region = refTrack.state.toolbar.region
+    if (isEnded || refTrack.state.regionEnded) {
+      // 自然结束或区域边界触发暂停：回到区域起点（或头部）
+      startTime = region ? region.start : 0
+    } else {
+      startTime = refTrack.state.currentTime
+      if (region && startTime >= region.end) startTime = region.start
     }
   }
+
   for (const track of tracks.value) {
-    if (!track.state.ws) continue
+    if (!track.state.ws || track.state.isPlaying) continue
     if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
       startSilenceDetection(track)
     }
-    if (playing && track.state.isPlaying) {
-      track.state.ws.pause()
-      track.state.isPlaying = false
-    } else if (!playing && !track.state.isPlaying) {
-      track.state.ws.play()
-      track.state.isPlaying = true
-    }
+    track.state.regionEnded = false
+    _regionEndLock[track.id] = false
+    // 在同一同步帧内完成 setTime + play，确保 play 调用时 media.currentTime 已就位
+    track.state.ws.setTime(startTime)
+    track.state.ws.play()
+    track.state.isPlaying = true
   }
 }
 
@@ -603,18 +609,20 @@ function togglePlay(track) {
     track.state.isPlaying = false
     return
   }
-  // 以底层 media.ended 为权威判断音频是否已播完，不依赖 currentTime 推断
   const ended = track.state.ws.getMediaElement()?.ended ?? false
   const atEnd = track.state.duration > 0 && track.state.currentTime >= track.state.duration - 0.1
   const region = track.state.toolbar.region
+  let startTime = track.state.currentTime
   if (region) {
-    if (ended || track.state.currentTime >= region.end) {
-      track.state.ws.setTime(region.start)
+    if (ended || track.state.regionEnded || track.state.currentTime >= region.end) {
+      startTime = region.start
     }
+    track.state.regionEnded = false
     _regionEndLock[track.id] = false
   } else if (ended || atEnd) {
-    track.state.ws.setTime(0)
+    startTime = 0
   }
+  track.state.ws.setTime(startTime)
   track.state.ws.play()
   track.state.isPlaying = true
 }
@@ -967,20 +975,20 @@ function exportReport(track) {
 /* ── CSS 变量默认值 ────────────────────────────────────────────────────── */
 .voice-player {
   --vp-bg: #ffffff;
-  --vp-border-color: #e5e7eb;
-  --vp-wave-color: #93c5fd;
-  --vp-progress-color: #2563eb;
-  --vp-cursor-color: #1d4ed8;
-  --vp-region-color: rgba(37, 99, 235, 0.2);
-  --vp-btn-color: #2563eb;
-  --vp-btn-hover-bg: #eff6ff;
+  --vp-border-color: #e0e7ff;
+  --vp-wave-color: #818cf8;
+  --vp-progress-color: #6366f1;
+  --vp-cursor-color: #4f46e5;
+  --vp-region-color: rgba(99, 102, 241, 0.15);
+  --vp-btn-color: #6366f1;
+  --vp-btn-hover-bg: #eef2ff;
   --vp-label-color: #374151;
   --vp-time-color: #6b7280;
-  --vp-slider-color: #2563eb;
+  --vp-slider-color: #6366f1;
   --vp-radius: 8px;
   --vp-bookmark-color: #f59e0b;
   --vp-error-color: #ef4444;
-  --vp-progress-bar-color: #2563eb;
+  --vp-progress-bar-color: #6366f1;
 
   background: var(--vp-bg);
   border-radius: var(--vp-radius);

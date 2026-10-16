@@ -1,36 +1,48 @@
 <!-- src/App.vue -->
 <template>
   <div style="max-width: 860px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 32px;">
-    <h1 style="font-size: 20px; font-weight: 700; color: #111827">VoicePlayer Demo</h1>
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <h1 style="font-size: 20px; font-weight: 700; color: #111827">VoicePlayer Demo</h1>
+      <button @click="isDark = !isDark" style="
+        padding: 6px 14px;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+        cursor: pointer;
+        font-size: 13px;
+        color: #374151;
+      ">{{ isDark ? '☀ 亮主题' : '☾ 暗主题' }}</button>
+    </div>
 
-    <!-- 双轨 · 暗色主题 -->
     <section>
-      <h2 style="font-size: 14px; color: #6b7280; margin-bottom: 8px">双轨 · 暗色主题</h2>
       <VoicePlayer
         :track-a="{ src: AUDIO_URL, label: 'A路' }"
         :track-b="{ src: AUDIO_URL, label: 'B路' }"
-        style="
-          --vp-bg: #0f172a;
-          --vp-border-color: #1e293b;
-          --vp-wave-color: #4f46e5;
-          --vp-progress-color: #818cf8;
-          --vp-cursor-color: #a5b4fc;
-          --vp-region-color: rgba(129,140,248,0.25);
-          --vp-btn-color: #818cf8;
-          --vp-btn-hover-bg: #1e293b;
-          --vp-label-color: #e2e8f0;
-          --vp-time-color: #94a3b8;
-          --vp-slider-color: #818cf8;
-          --vp-bookmark-color: #fbbf24;
-        "
+        :style="isDark ? darkTheme : {}"
       />
     </section>
-
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import VoicePlayer from './components/VoicePlayer.vue'
 
 const AUDIO_URL = '/demo.mp3'
+const isDark = ref(false)
+
+const darkTheme = {
+  '--vp-bg': '#0f172a',
+  '--vp-border-color': '#312e81',
+  '--vp-progress-color': '#a5b4fc',
+  '--vp-cursor-color': '#c7d2fe',
+  '--vp-region-color': 'rgba(165,180,252,0.2)',
+  '--vp-btn-color': '#a5b4fc',
+  '--vp-btn-hover-bg': '#1e1b4b',
+  '--vp-label-color': '#e0e7ff',
+  '--vp-time-color': '#94a3b8',
+  '--vp-slider-color': '#a5b4fc',
+  '--vp-bookmark-color': '#fbbf24',
+  '--vp-progress-bar-color': '#a5b4fc',
+}
 </script>
