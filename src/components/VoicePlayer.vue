@@ -1,30 +1,43 @@
 <!-- src/components/VoicePlayer.vue -->
 <template>
   <div class="voice-player" ref="rootEl">
-    <!-- AB 路全局控制条（仅双轨时显示） -->
-    <div v-if="props.trackB" class="vp-sync-bar">
-      <!-- 全局播放/暂停 -->
-      <button class="vp-btn" @click="togglePlayBoth" :title="bothPlaying ? '暂停全部' : '播放全部'">
-        {{ bothPlaying ? '⏸' : '▶' }} {{ bothPlaying ? '暂停全部' : '播放全部' }}
-      </button>
-      <!-- AB 全局音量控制 -->
-      <button class="vp-btn" @click="toggleMuteBoth" :title="bothMuted ? '取消静音' : '全部静音'">
-        {{ bothMuted ? '🔇' : '🔊' }}
-      </button>
-      <input
-        type="range" min="0" max="1" step="0.01"
-        :value="bothMuted ? 0 : abVolume"
-        class="vp-slider vp-ab-volume-slider"
-        @input="setVolumeBoth($event.target.value)"
-      />
-      <!-- AB 播放速度 -->
-      <button class="vp-btn vp-speed-btn" @click="cycleSpeedBoth" title="播放速度（两路同步）">
-        {{ abSpeed }}x
-      </button>
-      <!-- 合并导出标注 -->
-      <button class="vp-btn" @click="exportReportBoth" title="合并导出两路标注">📄</button>
-      <!-- 下载全部 -->
-      <button class="vp-btn" @click="downloadBoth" title="下载全部">↓ 下载全部</button>
+    <!-- 顶部控制栏 -->
+    <div class="vp-control-bar">
+      <!-- 左侧：主播放控制 -->
+      <div class="vp-playback-controls">
+        <button class="vp-btn" @click="handlePrev" title="上一条">
+          <SvgIcon name="previous" />
+        </button>
+        <button class="vp-btn" @click="handleRewind" title="回退">
+          <SvgIcon name="rewind" />
+        </button>
+        <button class="vp-btn vp-play-btn" @click="handlePlayPause" :title="isPlayingAll ? '暂停' : '播放'">
+          <SvgIcon :name="isPlayingAll ? 'pause' : 'play'" />
+        </button>
+        <button class="vp-btn" @click="handleForward" title="快进">
+          <SvgIcon name="forward" />
+        </button>
+        <button class="vp-btn" @click="handleNext" title="下一条">
+          <SvgIcon name="next" />
+        </button>
+        <button class="vp-btn vp-volume-btn" @click="handleToggleMute" :title="isAllMuted ? '取消静音' : '静音'">
+          <SvgIcon :name="isAllMuted ? 'volume_off' : 'volume_up'" />
+        </button>
+        <input
+          type="range" min="0" max="1" step="0.01"
+          :value="currentVolume"
+          class="vp-slider vp-ab-volume-slider"
+          @input="handleSetVolume($event.target.value)"
+        />
+      </div>
+      <!-- 右侧：辅助控制 -->
+      <div class="vp-aux-controls">
+        <button class="vp-btn vp-speed-btn" @click="handleCycleSpeed" title="播放速度">
+          {{ currentSpeed }}x
+        </button>
+        <button class="vp-btn" @click="handleExport" title="导出标注">📄</button>
+        <button class="vp-btn" @click="handleDownload" title="下载">↓</button>
+      </div>
     </div>
 
     <!-- 轨道列表 -->
@@ -49,10 +62,6 @@
             加载中 {{ track.state.loadProgress }}%
           </span>
 
-          <button v-if="!props.trackB" class="vp-btn vp-play-btn" @click="togglePlay(track)">
-            {{ track.state.isPlaying ? '⏸' : '▶' }}
-          </button>
-
           <span
             class="vp-time"
             @click="copyTime(track)"
@@ -61,18 +70,6 @@
             {{ track.state.timeCopied ? '已复制' : formatTime(track.state.currentTime) }}
             / {{ formatTime(track.state.duration) }}
           </span>
-
-          <template v-if="!props.trackB">
-            <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
-              {{ track.state.isMuted ? '🔇' : '🔊' }}
-            </button>
-            <input
-              type="range" min="0" max="1" step="0.01"
-              :value="track.state.isMuted ? 0 : track.state.volume"
-              class="vp-slider vp-volume-slider"
-              @input="setVolume(track, $event.target.value)"
-            />
-          </template>
 
           <button
             class="vp-btn"
@@ -509,6 +506,79 @@ const bothPlaying = computed(() => stateA.isPlaying || stateB.isPlaying)
 const bothMuted = computed(() => stateA.isMuted && stateB.isMuted)
 const abVolume = ref(1)
 const abSpeed = ref(1)
+
+// ── 顶部控制栏统一 computed ────────────────────────────────────────────────
+const isPlayingAll = computed(() =>
+  props.trackB ? bothPlaying.value : stateA.isPlaying
+)
+const isAllMuted = computed(() =>
+  props.trackB ? bothMuted.value : stateA.isMuted
+)
+const currentVolume = computed(() =>
+  props.trackB ? (isAllMuted.value ? 0 : abVolume.value)
+               : (stateA.isMuted ? 0 : stateA.volume)
+)
+const currentSpeed = computed(() =>
+  props.trackB ? abSpeed.value : stateA.speed
+)
+
+// ── 顶部控制栏操作函数 ────────────────────────────────────────────────────
+function handlePlayPause() {
+  if (props.trackB) togglePlayBoth()
+  else togglePlay(tracks.value[0])
+}
+
+function handleRewind() {
+  for (const track of tracks.value) {
+    if (!track.state.ws) continue
+    track.state.ws.setTime(Math.max(0, track.state.currentTime - 5))
+  }
+}
+
+function handleForward() {
+  for (const track of tracks.value) {
+    if (!track.state.ws) continue
+    track.state.ws.setTime(Math.min(track.state.duration, track.state.currentTime + 5))
+  }
+}
+
+function handlePrev() {
+  for (const track of tracks.value) {
+    track.state.ws?.setTime(0)
+  }
+}
+
+function handleNext() {
+  for (const track of tracks.value) {
+    if (!track.state.ws) continue
+    track.state.ws.setTime(track.state.duration)
+  }
+}
+
+function handleToggleMute() {
+  if (props.trackB) toggleMuteBoth()
+  else toggleMute(tracks.value[0])
+}
+
+function handleSetVolume(val) {
+  if (props.trackB) setVolumeBoth(val)
+  else setVolume(tracks.value[0], val)
+}
+
+function handleCycleSpeed() {
+  if (props.trackB) cycleSpeedBoth()
+  else cycleSpeed(tracks.value[0])
+}
+
+function handleExport() {
+  if (props.trackB) exportReportBoth()
+  else exportReport(tracks.value[0])
+}
+
+function handleDownload() {
+  if (props.trackB) downloadBoth()
+  else downloadAudio(tracks.value[0])
+}
 
 function setVolumeBoth(val) {
   const v = parseFloat(val)
@@ -1011,10 +1081,36 @@ function exportReport(track) {
   font-family: system-ui, sans-serif;
 }
 
-/* ── 同步栏 ──────────────────────────────────────────────────────────── */
-.vp-sync-bar {
+/* ── 顶部控制栏 ──────────────────────────────────────────────────────── */
+.vp-control-bar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vp-playback-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  .vp-btn {
+    font-size: 35px;
+    padding: 4px 1px;
+    height: 43px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .vp-volume-btn {
+    font-size: 25px;
+  }
+}
+
+.vp-aux-controls {
+  display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
