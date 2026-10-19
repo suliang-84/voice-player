@@ -1,17 +1,11 @@
 <!-- src/App.vue -->
 <template>
-  <div style="max-width: 860px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 32px;">
-    <div style="display: flex; align-items: center; justify-content: space-between;">
-      <h1 style="font-size: 20px; font-weight: 700; color: #111827">VoicePlayer Demo</h1>
-      <button @click="isDark = !isDark" style="
-        padding: 6px 14px;
-        border-radius: 6px;
-        border: 1px solid #d1d5db;
-        background: #f9fafb;
-        cursor: pointer;
-        font-size: 13px;
-        color: #374151;
-      ">{{ isDark ? '☀ 亮主题' : '☾ 暗主题' }}</button>
+  <div class="app-container">
+    <div class="app-header">
+      <h1 class="app-title">VoicePlayer Demo</h1>
+      <button class="app-theme-btn" @click="isDark = !isDark">
+        {{ isDark ? '☀ 亮主题' : '☾ 暗主题' }}
+      </button>
     </div>
 
     <section>
@@ -46,3 +40,36 @@ const darkTheme = {
   '--vp-progress-bar-color': '#a5b4fc',
 }
 </script>
+
+<style lang="scss" scoped>
+.app-container {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.app-theme-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+}
+</style>

@@ -983,7 +983,7 @@ function exportReport(track) {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
 /* ── CSS 变量默认值 ────────────────────────────────────────────────────── */
 .voice-player {
   --vp-bg: #ffffff;
@@ -1019,7 +1019,14 @@ function exportReport(track) {
   gap: 6px;
   flex-wrap: wrap;
 }
+
 .vp-ab-volume-slider { width: 90px; }
+
+/* ── 双轨模式包裹层 ───────────────────────────────────────────────────── */
+.vp-tracks-dual {
+  display: flex;
+  flex-direction: column;
+}
 
 /* ── 轨道 ────────────────────────────────────────────────────────────── */
 .vp-track {
@@ -1030,17 +1037,14 @@ function exportReport(track) {
   flex-direction: column;
   gap: 8px;
   outline: none;
-}
-.vp-track:focus-within { border-color: var(--vp-btn-color); }
 
-/* 双轨模式：轨道包裹层无间隙，轨道无边框 */
-.vp-tracks-dual {
-  display: flex;
-  flex-direction: column;
-}
-.vp-track--dual {
-  border: none;
-  border-radius: 0;
+  &:focus-within { border-color: var(--vp-btn-color); }
+
+  /* 双轨模式：轨道无边框 */
+  &--dual {
+    border: none;
+    border-radius: 0;
+  }
 }
 
 /* ── 头部 ────────────────────────────────────────────────────────────── */
@@ -1050,11 +1054,36 @@ function exportReport(track) {
   justify-content: space-between;
   min-height: 20px;
 }
-.vp-label { font-size: 13px; font-weight: 600; color: var(--vp-label-color); }
-.vp-header-right { display: flex; align-items: center; gap: 8px; }
-.vp-loading-text { font-size: 12px; color: var(--vp-time-color); }
-.vp-error-text { font-size: 12px; color: var(--vp-error-color); display: flex; align-items: center; gap: 6px; }
-.vp-retry-btn { font-size: 11px; padding: 2px 6px; }
+
+.vp-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vp-label-color);
+}
+
+.vp-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vp-loading-text {
+  font-size: 12px;
+  color: var(--vp-time-color);
+}
+
+.vp-error-text {
+  font-size: 12px;
+  color: var(--vp-error-color);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vp-retry-btn {
+  font-size: 11px;
+  padding: 2px 6px;
+}
 
 /* ── 加载进度条 ───────────────────────────────────────────────────────── */
 .vp-load-progress {
@@ -1062,25 +1091,30 @@ function exportReport(track) {
   background: var(--vp-border-color);
   border-radius: 2px;
   overflow: hidden;
-}
-.vp-load-progress-fill {
-  height: 100%;
-  background: var(--vp-progress-bar-color);
-  transition: width 0.2s;
+
+  &-fill {
+    height: 100%;
+    background: var(--vp-progress-bar-color);
+    transition: width 0.2s;
+  }
 }
 
 /* ── 波形区域 ────────────────────────────────────────────────────────── */
-.vp-waveform-wrap {
-  position: relative;
-  cursor: pointer;
-  overflow: hidden;
-}
-.vp-waveform-top { width: 100%; }
-.vp-waveform-mirror {
-  width: 100%;
-  transform: scaleY(-1);
-  opacity: 0.5;
-  pointer-events: none;
+.vp-waveform {
+  &-wrap {
+    position: relative;
+    cursor: pointer;
+    overflow: hidden;
+  }
+
+  &-top { width: 100%; }
+
+  &-mirror {
+    width: 100%;
+    transform: scaleY(-1);
+    opacity: 0.5;
+    pointer-events: none;
+  }
 }
 
 /* ── 浮动工具条 ──────────────────────────────────────────────────────── */
@@ -1094,21 +1128,23 @@ function exportReport(track) {
   padding: 3px 5px;
   display: flex;
   gap: 2px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   z-index: 20;
   white-space: nowrap;
+
+  button {
+    background: none;
+    border: none;
+    color: var(--vp-btn-color);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    line-height: 1.4;
+
+    &:hover { background: var(--vp-btn-hover-bg); }
+  }
 }
-.vp-region-toolbar button {
-  background: none;
-  border: none;
-  color: var(--vp-btn-color);
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  line-height: 1.4;
-}
-.vp-region-toolbar button:hover { background: var(--vp-btn-hover-bg); }
 
 /* ── 书签层 ──────────────────────────────────────────────────────────── */
 .vp-bookmarks-layer {
@@ -1117,6 +1153,7 @@ function exportReport(track) {
   pointer-events: none;
   z-index: 10;
 }
+
 .vp-bookmark {
   position: absolute;
   top: 0;
@@ -1124,30 +1161,32 @@ function exportReport(track) {
   pointer-events: all;
   cursor: pointer;
   transform: translateX(-50%);
-}
-.vp-bookmark-line {
-  width: 2px;
-  height: 100%;
-  background: var(--vp-bookmark-color);
-  margin: 0 auto;
-}
-.vp-bookmark-label {
-  position: absolute;
-  top: 2px;
-  left: 4px;
-  font-size: 10px;
-  color: var(--vp-bookmark-color);
-  white-space: nowrap;
-  background: var(--vp-bg);
-  padding: 0 2px;
-  border-radius: 2px;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-}
-.vp-bookmark:hover .vp-bookmark-label { opacity: 1; }
 
-/* ── 控制栏 ──────────────────────────────────────────────────────────── */
+  &-line {
+    width: 2px;
+    height: 100%;
+    background: var(--vp-bookmark-color);
+    margin: 0 auto;
+  }
+
+  &-label {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-size: 10px;
+    color: var(--vp-bookmark-color);
+    white-space: nowrap;
+    background: var(--vp-bg);
+    padding: 0 2px;
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+  }
+
+  &:hover .vp-bookmark-label { opacity: 1; }
+}
+
 /* ── 通用按钮 ────────────────────────────────────────────────────────── */
 .vp-btn {
   background: none;
@@ -1160,10 +1199,16 @@ function exportReport(track) {
   line-height: 1;
   transition: background 0.15s;
   white-space: nowrap;
+
+  &:hover { background: var(--vp-btn-hover-bg); }
+  &--active { background: var(--vp-btn-hover-bg); border-color: var(--vp-btn-color); }
 }
-.vp-btn:hover { background: var(--vp-btn-hover-bg); }
-.vp-btn--active { background: var(--vp-btn-hover-bg); border-color: var(--vp-btn-color); }
-.vp-speed-btn { font-size: 12px; font-weight: 600; min-width: 36px; }
+
+.vp-speed-btn {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 36px;
+}
 
 /* ── 时间 ────────────────────────────────────────────────────────────── */
 .vp-time {
@@ -1173,8 +1218,9 @@ function exportReport(track) {
   min-width: 90px;
   cursor: pointer;
   user-select: none;
+
+  &:hover { color: var(--vp-btn-color); }
 }
-.vp-time:hover { color: var(--vp-btn-color); }
 
 /* ── 滑块 ────────────────────────────────────────────────────────────── */
 .vp-slider {
@@ -1185,14 +1231,16 @@ function exportReport(track) {
   background: var(--vp-border-color);
   outline: none;
   cursor: pointer;
-}
-.vp-volume-slider { width: 70px; }
-.vp-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--vp-slider-color);
-  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--vp-slider-color);
+    cursor: pointer;
+  }
 }
 
+.vp-volume-slider { width: 70px; }
 </style>
