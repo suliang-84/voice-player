@@ -7,6 +7,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "element-plus": "^2.14.7",
     "vue": "^3.4.0",
     "wavesurfer.js": "^7.8.0"
   },

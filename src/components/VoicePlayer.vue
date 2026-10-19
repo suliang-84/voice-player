@@ -27,18 +27,73 @@
           type="range" min="0" max="1" step="0.01"
           :value="currentVolume"
           class="vp-slider vp-ab-volume-slider"
+          :style="volumeSliderStyle"
           @input="handleSetVolume($event.target.value)"
         />
       </div>
       <!-- 右侧：辅助控制 -->
       <div class="vp-aux-controls">
-        <button class="vp-btn vp-speed-btn" @click="handleCycleSpeed" title="播放速度">
-          {{ currentSpeed }}x
+        <button class="vp-btn" @click="openSettings" title="设置">
+          <SvgIcon name="setting" size="20px" />
         </button>
-        <button class="vp-btn" @click="handleExport" title="导出标注">📄</button>
-        <button class="vp-btn" @click="handleDownload" title="下载">↓</button>
+        <button class="vp-btn" @click="handleDownload" title="下载">
+          <SvgIcon name="download" size="20px" />
+        </button>
       </div>
     </div>
+
+    <!-- 设置弹窗 -->
+    <teleport to="body">
+      <div v-if="settingsVisible" class="vp-settings-overlay" @click.self="settingsVisible = false">
+        <div class="vp-settings-dialog">
+          <div class="vp-settings-header">
+            <span class="vp-settings-title">播放设置</span>
+            <button class="vp-settings-close" @click="settingsVisible = false">✕</button>
+          </div>
+          <div class="vp-settings-body">
+            <!-- 播放倍数 -->
+            <div class="vp-settings-row">
+              <label class="vp-settings-label">播放倍数</label>
+              <el-select v-model="draftSettings.speed" class="vp-settings-select">
+                <el-option v-for="s in SPEED_OPTIONS" :key="s" :label="`${s}x`" :value="s" />
+              </el-select>
+            </div>
+            <!-- 快进/后退秒数 -->
+            <div class="vp-settings-row">
+              <label class="vp-settings-label">快进 / 后退秒数（秒）</label>
+              <el-input-number
+                v-model="draftSettings.seekStep"
+                :min="1"
+                :max="60"
+                :step="1"
+                controls-position="right"
+                class="vp-settings-input-number"
+              />
+            </div>
+            <!-- 播放模式 -->
+            <div class="vp-settings-row">
+              <label class="vp-settings-label">播放模式</label>
+              <el-select v-model="draftSettings.playMode" class="vp-settings-select">
+                <el-option label="单条播放" value="single" />
+                <el-option label="顺序播放" value="sequence" />
+              </el-select>
+            </div>
+            <!-- 主题 -->
+            <div class="vp-settings-row">
+              <label class="vp-settings-label">主题</label>
+              <el-select v-model="draftSettings.theme" class="vp-settings-select">
+                <el-option label="亮色" value="light" />
+                <el-option label="深色" value="dark" />
+              </el-select>
+            </div>
+          </div>
+          <div class="vp-settings-footer">
+            <button class="vp-settings-btn vp-settings-btn--cancel" @click="settingsVisible = false">取消</button>
+            <button class="vp-settings-btn vp-settings-btn--confirm" @click="applySettings">确认</button>
+          </div>
+        </div>
+      </div>
+    </teleport>
 
     <!-- 轨道列表 -->
     <div :class="props.trackB ? 'vp-tracks-dual' : null">
@@ -71,15 +126,12 @@
             / {{ formatTime(track.state.duration) }}
           </span>
 
-          <button
-            class="vp-btn"
-            :class="{ 'vp-btn--active': track.state.skipSilence }"
-            @click="toggleSkipSilence(track)"
-            title="跳过空音"
-          >静</button>
-
-          <button class="vp-btn" @click="exportReport(track)" title="导出标注报告">📄</button>
-          <button class="vp-btn" @click="downloadAudio(track)" title="下载音频">↓</button>
+          <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
+            <SvgIcon :name="track.state.isMuted ? 'volume_off' : 'volume_up'" size="20px" />
+          </button>
+          <button class="vp-btn" @click="downloadAudio(track)" title="下载音频">
+            <SvgIcon name="download" size="20px" />
+          </button>
         </div>
       </div>
 
@@ -144,6 +196,70 @@ const props = defineProps({
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+
+// ── 设置弹窗 ────────────────────────────────────────────────────────────────
+const settingsVisible = ref(false)
+const seekStep = ref(5)
+const playMode = ref('single')
+const theme = ref('light')
+
+const DARK_THEME = {
+  '--vp-bg': '#0f172a',
+  '--vp-border-color': '#312e81',
+  '--vp-progress-color': '#a5b4fc',
+  '--vp-cursor-color': '#c7d2fe',
+  '--vp-region-color': 'rgba(165,180,252,0.2)',
+  '--vp-btn-color': '#a5b4fc',
+  '--vp-btn-hover-bg': '#1e1b4b',
+  '--vp-label-color': '#e0e7ff',
+  '--vp-time-color': '#94a3b8',
+  '--vp-slider-color': '#a5b4fc',
+  '--vp-bookmark-color': '#fbbf24',
+  '--vp-progress-bar-color': '#a5b4fc',
+}
+
+const draftSettings = reactive({
+  speed: 1,
+  seekStep: 5,
+  playMode: 'single',
+  theme: 'light',
+})
+
+function openSettings() {
+  draftSettings.speed = currentSpeed.value
+  draftSettings.seekStep = seekStep.value
+  draftSettings.playMode = playMode.value
+  draftSettings.theme = theme.value
+  settingsVisible.value = true
+}
+
+function applySettings() {
+  // 应用播放倍数
+  if (props.trackB) {
+    abSpeed.value = draftSettings.speed
+    for (const track of tracks.value) {
+      track.state.speed = draftSettings.speed
+      track.state.ws?.setPlaybackRate(draftSettings.speed)
+    }
+  } else {
+    stateA.speed = draftSettings.speed
+    stateA.ws?.setPlaybackRate(draftSettings.speed)
+  }
+  // 应用快进/后退秒数
+  seekStep.value = draftSettings.seekStep || 5
+  // 应用播放模式
+  playMode.value = draftSettings.playMode
+  // 应用主题
+  theme.value = draftSettings.theme
+  if (rootEl.value) {
+    const vars = draftSettings.theme === 'dark' ? DARK_THEME : {}
+    // 清除旧变量
+    Object.keys(DARK_THEME).forEach(k => rootEl.value.style.removeProperty(k))
+    Object.entries(vars).forEach(([k, v]) => rootEl.value.style.setProperty(k, v))
+  }
+  settingsVisible.value = false
+}
 
 // ── 根元素 ref ─────────────────────────────────────────────────────────────
 const rootEl = ref(null)
@@ -522,6 +638,13 @@ const currentSpeed = computed(() =>
   props.trackB ? abSpeed.value : stateA.speed
 )
 
+const volumeSliderStyle = computed(() => {
+  const pct = Math.round(currentVolume.value * 100)
+  return {
+    background: `linear-gradient(to right, var(--vp-slider-color) ${pct}%, var(--vp-border-color) ${pct}%)`,
+  }
+})
+
 // ── 顶部控制栏操作函数 ────────────────────────────────────────────────────
 function handlePlayPause() {
   if (props.trackB) togglePlayBoth()
@@ -531,14 +654,14 @@ function handlePlayPause() {
 function handleRewind() {
   for (const track of tracks.value) {
     if (!track.state.ws) continue
-    track.state.ws.setTime(Math.max(0, track.state.currentTime - 5))
+    track.state.ws.setTime(Math.max(0, track.state.currentTime - seekStep.value))
   }
 }
 
 function handleForward() {
   for (const track of tracks.value) {
     if (!track.state.ws) continue
-    track.state.ws.setTime(Math.min(track.state.duration, track.state.currentTime + 5))
+    track.state.ws.setTime(Math.min(track.state.duration, track.state.currentTime + seekStep.value))
   }
 }
 
@@ -1054,6 +1177,8 @@ function exportReport(track) {
 </script>
 
 <style lang="scss" scoped>
+button { cursor: pointer !important; }
+
 /* ── CSS 变量默认值 ────────────────────────────────────────────────────── */
 .voice-player {
   --vp-bg: #ffffff;
@@ -1128,7 +1253,6 @@ function exportReport(track) {
 .vp-track {
   border: 1px solid var(--vp-border-color);
   border-radius: calc(var(--vp-radius) - 2px);
-  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1183,7 +1307,7 @@ function exportReport(track) {
 
 /* ── 加载进度条 ───────────────────────────────────────────────────────── */
 .vp-load-progress {
-  height: 3px;
+  height: 4px;
   background: var(--vp-border-color);
   border-radius: 2px;
   overflow: hidden;
@@ -1237,8 +1361,6 @@ function exportReport(track) {
     padding: 2px 5px;
     border-radius: 4px;
     line-height: 1.4;
-
-    &:hover { background: var(--vp-btn-hover-bg); }
   }
 }
 
@@ -1291,12 +1413,10 @@ function exportReport(track) {
   color: var(--vp-btn-color);
   cursor: pointer;
   font-size: 15px;
-  padding: 4px 8px;
   line-height: 1;
   transition: background 0.15s;
   white-space: nowrap;
 
-  &:hover { background: var(--vp-btn-hover-bg); }
   &--active { background: var(--vp-btn-hover-bg); border-color: var(--vp-btn-color); }
 }
 
@@ -1308,14 +1428,13 @@ function exportReport(track) {
 
 /* ── 时间 ────────────────────────────────────────────────────────────── */
 .vp-time {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--vp-time-color);
   font-variant-numeric: tabular-nums;
   min-width: 90px;
   cursor: pointer;
   user-select: none;
 
-  &:hover { color: var(--vp-btn-color); }
 }
 
 /* ── 滑块 ────────────────────────────────────────────────────────────── */
@@ -1330,8 +1449,8 @@ function exportReport(track) {
 
   &::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     background: var(--vp-slider-color);
     cursor: pointer;
@@ -1339,4 +1458,128 @@ function exportReport(track) {
 }
 
 .vp-volume-slider { width: 70px; }
+
+/* ── 设置弹窗 ────────────────────────────────────────────────────────────── */
+.vp-settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.vp-settings-dialog {
+  background: #fff;
+  border-radius: 12px;
+  width: 360px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vp-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #e0e7ff;
+}
+
+.vp-settings-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.vp-settings-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #6b7280;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.vp-settings-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.vp-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vp-settings-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.vp-settings-select {
+  width: 100%;
+}
+
+.vp-settings-input-number {
+  width: 100%;
+}
+
+.vp-settings-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vp-settings-input {
+  width: 80px;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #111827;
+  outline: none;
+
+  &:focus { border-color: #6366f1; }
+}
+
+.vp-settings-unit {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.vp-settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid #e0e7ff;
+}
+
+.vp-settings-btn {
+  padding: 7px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s;
+
+  &--cancel {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #d1d5db;
+
+  }
+
+  &--confirm {
+    background: #6366f1;
+    color: #fff;
+  }
+}
 </style>
