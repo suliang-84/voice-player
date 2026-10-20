@@ -299,13 +299,9 @@ const tracks = computed(() => {
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const waveRefs = {}
-const mirrorRefs = {}
 const wrapRefs = {}
-// Store rAF IDs for mirror loops keyed by track id
-const mirrorRafIds = {}
 
 function setWaveRef(el, id) { if (el) waveRefs[id] = el }
-function setMirrorRef(el, id) { if (el) mirrorRefs[id] = el }
 function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
 
 // ── 选区颜色（按轨道 ID） ──────────────────────────────────────────────
@@ -317,14 +313,57 @@ function regionColor(trackId) {
 }
 
 // ── WaveSurfer 初始化 ──────────────────────────────────────────────────
+// ── 创建波形渐变 ────────────────────────────────────────────────────────
+function createWaveGradient(height, trackId) {
+  const canvas = document.createElement('canvas')
+  canvas.height = height * 2
+  const ctx = canvas.getContext('2d')
+  const isA = trackId === 'A'
+
+  // 上半（0 → height）
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height)
+  if (isA) {
+    gradient.addColorStop(0,   'rgba(255, 160, 100, 0.85)')
+    gradient.addColorStop(0.5, 'rgba(255,  80, 120, 0.90)')
+    gradient.addColorStop(1,   'rgba(255, 160, 100, 0.85)')
+  } else {
+    gradient.addColorStop(0,   'rgba(100, 180, 255, 0.85)')
+    gradient.addColorStop(0.5, 'rgba( 80, 120, 255, 0.90)')
+    gradient.addColorStop(1,   'rgba(100, 180, 255, 0.85)')
+  }
+  return gradient
+}
+
+function createProgressGradient(height, trackId) {
+  const canvas = document.createElement('canvas')
+  canvas.height = height * 2
+  const ctx = canvas.getContext('2d')
+  const isA = trackId === 'A'
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height)
+  if (isA) {
+    gradient.addColorStop(0,   'rgba(255, 100,  60, 0.95)')
+    gradient.addColorStop(0.5, 'rgba(220,  30,  80, 0.95)')
+    gradient.addColorStop(1,   'rgba(255, 100,  60, 0.95)')
+  } else {
+    gradient.addColorStop(0,   'rgba( 60, 140, 255, 0.95)')
+    gradient.addColorStop(0.5, 'rgba( 30,  60, 220, 0.95)')
+    gradient.addColorStop(1,   'rgba( 60, 140, 255, 0.95)')
+  }
+  return gradient
+}
+
 async function initWaveSurfer(track) {
   const { config, state } = track
   const waveContainer = waveRefs[track.id]
   if (!waveContainer) return
 
   const opt = props.options || {}
-  const waveformType = opt.waveformType ?? 'mirror-bar'
-  const isMirror = waveformType.startsWith('mirror-')
+
+  // ── 等待容器有实际高度 ───────────────────────────────────────────────
+  const containerHeight = waveContainer.clientHeight || 150
+  const waveGradient     = createWaveGradient(containerHeight, track.id)
+  const progressGradient = createProgressGradient(containerHeight, track.id)
 
   // ── 构建插件列表 ────────────────────────────────────────────────────
   const regions = RegionsPlugin.create()
@@ -334,22 +373,12 @@ async function initWaveSurfer(track) {
   const skipSilencePlugin = null
 
   // ── 创建 WaveSurfer 实例 ────────────────────────────────────────────
+  const cursorColor = track.id === 'A' ? '#ff3366' : '#3366ff'
   const ws = WaveSurfer.create({
     container: waveContainer,
-    waveColor: opt.waveColor
-      || (props.trackB
-        ? (track.id === 'A' ? '#bfdef7' : '#b7e6e1')
-        : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-wave-color').trim() : '') || '#bfdef7'),
-    progressColor: opt.progressColor
-      || (props.trackB
-        ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
-        : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-progress-color').trim() : '') || '#6366f1'),
-    cursorColor: opt.cursorColor
-      || (props.trackB
-        ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
-        : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
-    barWidth: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barWidth ?? 2) : undefined,
-    barGap: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barGap ?? 1) : undefined,
+    waveColor: opt.waveColor || waveGradient,
+    progressColor: opt.progressColor || progressGradient,
+    cursorColor: opt.cursorColor || cursorColor,
     height: opt.height ?? 'auto',
     interact: false,  // 禁用内置 click-to-seek，由下方手动判断点击/拖拽
     plugins,
@@ -403,44 +432,7 @@ async function initWaveSurfer(track) {
     }
   })
 
-  // ── 镜像下半：用 requestAnimationFrame 持续 drawImage 复制像素 ──────
-  if (isMirror) {
-    ws.on('ready', () => {
-      const mirrorDiv = mirrorRefs[track.id]
-      if (!mirrorDiv) return
 
-      // 取 WaveSurfer shadow DOM 或普通 DOM 中的第一块 canvas
-      const sourceCanvas =
-        waveContainer.shadowRoot?.querySelector('canvas') ||
-        waveContainer.querySelector('canvas')
-
-      if (!sourceCanvas) return
-
-      // 停止旧循环（如重新初始化时）
-      if (mirrorRafIds[track.id]) cancelAnimationFrame(mirrorRafIds[track.id])
-
-      // 创建镜像 canvas，尺寸与源 canvas 保持一致
-      mirrorDiv.innerHTML = ''
-      const mirrorCanvas = document.createElement('canvas')
-      mirrorCanvas.width = sourceCanvas.width
-      mirrorCanvas.height = sourceCanvas.height
-      mirrorCanvas.style.width = '100%'
-      mirrorCanvas.style.height = '100%'
-      mirrorDiv.appendChild(mirrorCanvas)
-      const mirrorCtx = mirrorCanvas.getContext('2d')
-
-      // rAF 持续同步像素
-      function drawMirror() {
-        if (mirrorCanvas.width !== sourceCanvas.width || mirrorCanvas.height !== sourceCanvas.height) {
-          mirrorCanvas.width = sourceCanvas.width
-          mirrorCanvas.height = sourceCanvas.height
-        }
-        try { mirrorCtx.drawImage(sourceCanvas, 0, 0) } catch (_) { /* ignore cross-origin */ }
-        mirrorRafIds[track.id] = requestAnimationFrame(drawMirror)
-      }
-      drawMirror()
-    })
-  }
 
   // ── 音频加载（Task 4）──────────────────────────────────────────────
   await loadAudio(track)
@@ -569,11 +561,6 @@ async function loadAudio(track) {
 // ── 重试加载 ─────────────────────────────────────────────────────────────
 async function retryLoad(track) {
   stopSilenceDetection(track)
-  // 停止镜像循环
-  if (mirrorRafIds[track.id]) {
-    cancelAnimationFrame(mirrorRafIds[track.id])
-    delete mirrorRafIds[track.id]
-  }
   track.state.loadError = null
   track.state.ws?.destroy()
   track.state.ws = null
@@ -593,11 +580,6 @@ onBeforeUnmount(() => {
   for (const track of tracks.value) {
     // 停止静音检测
     stopSilenceDetection(track)
-    // 停止镜像 rAF 循环
-    if (mirrorRafIds[track.id]) {
-      cancelAnimationFrame(mirrorRafIds[track.id])
-      delete mirrorRafIds[track.id]
-    }
     // 清理区间事件监听器
     if (regionListeners[track.id]) {
       regionListeners[track.id].forEach(unsub => unsub?.())
