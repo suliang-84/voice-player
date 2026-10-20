@@ -313,57 +313,12 @@ function regionColor(trackId) {
 }
 
 // ── WaveSurfer 初始化 ──────────────────────────────────────────────────
-// ── 创建波形渐变 ────────────────────────────────────────────────────────
-function createWaveGradient(height, trackId) {
-  const canvas = document.createElement('canvas')
-  canvas.height = height * 2
-  const ctx = canvas.getContext('2d')
-  const isA = trackId === 'A'
-
-  // 上半（0 → height）
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height)
-  if (isA) {
-    gradient.addColorStop(0,   'rgba(255, 160, 100, 0.85)')
-    gradient.addColorStop(0.5, 'rgba(255,  80, 120, 0.90)')
-    gradient.addColorStop(1,   'rgba(255, 160, 100, 0.85)')
-  } else {
-    gradient.addColorStop(0,   'rgba(100, 180, 255, 0.85)')
-    gradient.addColorStop(0.5, 'rgba( 80, 120, 255, 0.90)')
-    gradient.addColorStop(1,   'rgba(100, 180, 255, 0.85)')
-  }
-  return gradient
-}
-
-function createProgressGradient(height, trackId) {
-  const canvas = document.createElement('canvas')
-  canvas.height = height * 2
-  const ctx = canvas.getContext('2d')
-  const isA = trackId === 'A'
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height)
-  if (isA) {
-    gradient.addColorStop(0,   'rgba(255, 100,  60, 0.95)')
-    gradient.addColorStop(0.5, 'rgba(220,  30,  80, 0.95)')
-    gradient.addColorStop(1,   'rgba(255, 100,  60, 0.95)')
-  } else {
-    gradient.addColorStop(0,   'rgba( 60, 140, 255, 0.95)')
-    gradient.addColorStop(0.5, 'rgba( 30,  60, 220, 0.95)')
-    gradient.addColorStop(1,   'rgba( 60, 140, 255, 0.95)')
-  }
-  return gradient
-}
-
 async function initWaveSurfer(track) {
   const { config, state } = track
   const waveContainer = waveRefs[track.id]
   if (!waveContainer) return
 
   const opt = props.options || {}
-
-  // ── 等待容器有实际高度 ───────────────────────────────────────────────
-  const containerHeight = waveContainer.clientHeight || 150
-  const waveGradient     = createWaveGradient(containerHeight, track.id)
-  const progressGradient = createProgressGradient(containerHeight, track.id)
 
   // ── 构建插件列表 ────────────────────────────────────────────────────
   const regions = RegionsPlugin.create()
@@ -373,12 +328,17 @@ async function initWaveSurfer(track) {
   const skipSilencePlugin = null
 
   // ── 创建 WaveSurfer 实例 ────────────────────────────────────────────
-  const cursorColor = track.id === 'A' ? '#ff3366' : '#3366ff'
   const ws = WaveSurfer.create({
     container: waveContainer,
-    waveColor: opt.waveColor || waveGradient,
-    progressColor: opt.progressColor || progressGradient,
-    cursorColor: opt.cursorColor || cursorColor,
+    waveColor: opt.waveColor || (props.trackB
+      ? (track.id === 'A' ? '#bfdef7' : '#b7e6e1')
+      : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-wave-color').trim() : '') || '#bfdef7'),
+    progressColor: opt.progressColor || (props.trackB
+      ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
+      : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-progress-color').trim() : '') || '#6366f1'),
+    cursorColor: opt.cursorColor || (props.trackB
+      ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
+      : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
     height: opt.height ?? 'auto',
     interact: false,  // 禁用内置 click-to-seek，由下方手动判断点击/拖拽
     plugins,
@@ -415,20 +375,24 @@ async function initWaveSurfer(track) {
     addBookmark(track, { id: Date.now().toString(), time, label })
   })
 
-  // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例）────────────────────
+  // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例，同步所有轨道）────
   waveContainer.addEventListener('wheel', (e) => {
     e.preventDefault()
     const delta = e.deltaY > 0 ? -10 : 10
-    state.zoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
-    ws.zoom(state.zoom)
+    const newZoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
+    for (const t of tracks.value) {
+      t.state.zoom = newZoom
+      t.state.ws?.zoom(newZoom)
+    }
   }, { passive: false })
 
   waveContainer.addEventListener('dblclick', (e) => {
-    // 已有缩放时双击恢复原比例，否则走书签逻辑
     if (state.zoom > 1) {
       e.stopImmediatePropagation()
-      state.zoom = 1
-      ws.zoom(1)
+      for (const t of tracks.value) {
+        t.state.zoom = 1
+        t.state.ws?.zoom(1)
+      }
     }
   })
 
