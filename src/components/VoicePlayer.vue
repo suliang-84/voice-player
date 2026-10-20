@@ -117,13 +117,8 @@
             加载中 {{ track.state.loadProgress }}%
           </span>
 
-          <span
-            class="vp-time"
-            @click="copyTime(track)"
-            :title="track.state.timeCopied ? '已复制！' : '点击复制时间'"
-          >
-            {{ track.state.timeCopied ? '已复制' : formatTime(track.state.currentTime) }}
-            / {{ formatTime(track.state.duration) }}
+          <span class="vp-time">
+            {{ formatTime(track.state.currentTime) }} / {{ formatTime(track.state.duration) }}
           </span>
 
           <button class="vp-btn" @click="toggleMute(track)" :title="track.state.isMuted ? '取消静音' : '静音'">
@@ -284,7 +279,6 @@ function createTrackState(id) {
     zoom: 1,
     loopEnabled: false,
     skipSilence: true,
-    timeCopied: false,
     ws: null,
     regions: null,
     skipSilencePlugin: null,
@@ -874,15 +868,6 @@ function formatTime(seconds) {
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
   const s = Math.floor(seconds % 60).toString().padStart(2, '0')
   return `${m}:${s}`
-}
-
-async function copyTime(track) {
-  const time = formatTime(track.state.currentTime)
-  try {
-    await navigator.clipboard.writeText(time)
-    track.state.timeCopied = true
-    setTimeout(() => { track.state.timeCopied = false }, 1500)
-  } catch (_) {}
 }
 
 
