@@ -167,8 +167,6 @@
         <!-- 上半波形（WaveSurfer 渲染） -->
         <div :ref="el => setWaveRef(el, track.id)" class="vp-waveform-top"></div>
 
-        <!-- 下半镜像（CSS scaleY(-1)） -->
-        <div :ref="el => setMirrorRef(el, track.id)" class="vp-waveform-mirror"></div>
       </div>
 
     </div>
@@ -352,7 +350,7 @@ async function initWaveSurfer(track) {
         : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
     barWidth: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barWidth ?? 2) : undefined,
     barGap: ['mirror-bar', 'bar'].includes(waveformType) ? (opt.barGap ?? 1) : undefined,
-    height: opt.height ?? 80,
+    height: opt.height ?? 'auto',
     interact: false,  // 禁用内置 click-to-seek，由下方手动判断点击/拖拽
     plugins,
   })
@@ -388,13 +386,22 @@ async function initWaveSurfer(track) {
     addBookmark(track, { id: Date.now().toString(), time, label })
   })
 
-  // ── 滚轮缩放 ──────────────────────────────────────────────────────────
+  // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例）────────────────────
   waveContainer.addEventListener('wheel', (e) => {
     e.preventDefault()
     const delta = e.deltaY > 0 ? -10 : 10
     state.zoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
     ws.zoom(state.zoom)
   }, { passive: false })
+
+  waveContainer.addEventListener('dblclick', (e) => {
+    // 已有缩放时双击恢复原比例，否则走书签逻辑
+    if (state.zoom > 1) {
+      e.stopImmediatePropagation()
+      state.zoom = 1
+      ws.zoom(1)
+    }
+  })
 
   // ── 镜像下半：用 requestAnimationFrame 持续 drawImage 复制像素 ──────
   if (isMirror) {
@@ -1189,6 +1196,8 @@ button { cursor: pointer !important; }
   gap: 12px;
   padding: 16px;
   font-family: system-ui, sans-serif;
+  height: 400px;
+  overflow: hidden;
 }
 
 /* ── 顶部控制栏 ──────────────────────────────────────────────────────── */
@@ -1228,13 +1237,14 @@ button { cursor: pointer !important; }
 
 .vp-ab-volume-slider { width: 90px; }
 
-/* ── 双轨模式包裹层 ───────────────────────────────────────────────────── */
+/* ── 双轨模式包裹层 & 轨道 ───────────────────────────────────────────── */
 .vp-tracks-dual {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
-/* ── 轨道 ────────────────────────────────────────────────────────────── */
 .vp-track {
   border: 1px solid var(--vp-border-color);
   border-radius: calc(var(--vp-radius) - 2px);
@@ -1242,6 +1252,9 @@ button { cursor: pointer !important; }
   flex-direction: column;
   gap: 8px;
   outline: none;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 
   &:focus-within { border-color: var(--vp-btn-color); }
 
@@ -1310,15 +1323,16 @@ button { cursor: pointer !important; }
     position: relative;
     cursor: pointer;
     overflow: hidden;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
-  &-top { width: 100%; }
-
-  &-mirror {
+  &-top {
     width: 100%;
-    transform: scaleY(-1);
-    opacity: 0.5;
-    pointer-events: none;
+    height: 100%;
+    overflow: hidden;
   }
 }
 
