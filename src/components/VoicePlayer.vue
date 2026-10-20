@@ -469,9 +469,10 @@ async function loadAudio(track) {
 
   ws.on('finish', () => { state.isPlaying = false })
 
+  // currentTime 节流：每 250ms 才更新响应式状态，避免高频触发 Vue 重渲染
+  let _lastTimeUpdate = 0
   ws.on('timeupdate', (time) => {
-    state.currentTime = time
-
+    // 边界检测与静音跳过用局部时间，不依赖响应式
     // peaks 模式跳过空音
     if (state.skipSilence && config.silences?.length) {
       const silent = config.silences.find(r => time >= r.start && time < r.end)
@@ -492,12 +493,17 @@ async function loadAudio(track) {
           ws.setTime(region.end)
           state.isPlaying = false
           state.regionEnded = true
-          // 锁短暂保持，防止 pause 触发的 timeupdate 再次进入
           setTimeout(() => { _regionEndLock[track.id] = false }, 200)
         }
       }
     }
-    // AB 同步已移至用户 seek 时触发，播放中不干预，保证进度条丝滑
+
+    // 节流：250ms 更新一次显示用的响应式 currentTime
+    const now = Date.now()
+    if (now - _lastTimeUpdate >= 250) {
+      _lastTimeUpdate = now
+      state.currentTime = time
+    }
   })
 
   // ── 解析 URL ──────────────────────────────────────────────────────────
