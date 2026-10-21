@@ -144,7 +144,6 @@
           :style="{ left: track.state.toolbar.left + 'px' }"
         >
           <button @click="downloadRegion(track)" title="下载选区">↓</button>
-          <button @click="addAnnotation(track)" title="添加批注">✎</button>
           <button @click="clearRegion(track)" title="清除选区">✕</button>
         </div>
 
@@ -283,7 +282,8 @@ function createTrackState(id) {
     loadProgress: 0,
     loadError: null,
     currentTime: 0,
-    duration: 0,
+    duration: 0,       // 显示用真实时长，对齐后不变
+    realDuration: 0,   // 音频文件实际时长
     volume: 1,
     isMuted: false,
     speed: 1,
@@ -297,7 +297,6 @@ function createTrackState(id) {
     toolbar: { visible: false, left: 0, region: null },
     regionEnded: false,
     bookmarks: [],
-    annotations: [],
   })
 }
 
@@ -321,6 +320,45 @@ function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
 const unifiedScrollLeft = ref(0)
 const unifiedScrollMax = ref(0)
 let _scrollRaf = null
+
+// ── 双轨时长对齐 ────────────────────────────────────────────────────────────
+let _durationsAligned = false
+
+async function alignDurations() {
+  if (!props.trackB) return
+  if (!stateA.realDuration || !stateB.realDuration) return  // 等两路都 ready
+  if (_durationsAligned) return
+  _durationsAligned = true
+
+  const maxDur = Math.max(stateA.realDuration, stateB.realDuration)
+
+  for (const track of tracks.value) {
+    if (track.state.realDuration >= maxDur - 0.5) continue  // 跳过较长的轨道
+
+    const ws = track.state.ws
+    if (!ws) continue
+
+    // 导出当前已渲染的峰值数据
+    const exported = ws.exportPeaks({ channels: 1, maxLength: 8000, precision: 2 })
+    const real = exported[0] || []
+    const ratio = maxDur / track.state.realDuration
+    const newLen = Math.ceil(real.length * ratio)
+
+    // 补零：zeros 代表静音，WaveSurfer 会渲染为平线
+    const padded = new Array(newLen).fill(0)
+    for (let i = 0; i < real.length; i++) padded[i] = real[i]
+
+    // 用新的峰值数据 + maxDuration 重渲染（不重新加载音频）
+    const url = track.state.objectUrl || track.config.src || ''
+    await ws.load(url, [padded], maxDur)
+
+    // ── 关键修复 ────────────────────────────────────────────────────────────
+    // WaveSurfer.getDuration() 优先返回 media.duration（真实音频时长），
+    // 即使 ws.load() 传入了 maxDur，进度条依然用 realDuration 计算 → 不同步。
+    // 通过 monkey-patch 强制返回 maxDur，使两路进度条以相同基准渲染。
+    ws.getDuration = () => maxDur
+  }
+}
 
 // WaveSurfer v7 结构：waveRefs[id] → firstElementChild (shadow host) → shadowRoot → .scroll
 function getWsScrollEl(trackId) {
@@ -412,6 +450,8 @@ async function initWaveSurfer(track) {
       ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
       : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
     height: opt.height ?? 'auto',
+    barHeight: 0.8,
+    normalize: true,
     interact: false,
     autoCenter: true,
     autoScroll: true,
@@ -428,10 +468,14 @@ async function initWaveSurfer(track) {
   waveContainer.addEventListener('mousedown', (e) => { _mouseDownX = e.clientX })
   waveContainer.addEventListener('mouseup', (e) => {
     if (Math.abs(e.clientX - _mouseDownX) >= 5) return  // 拖拽，跳过 seek
-    if (!state.duration) return
+    if (!state.realDuration) return
     const rect = waveContainer.getBoundingClientRect()
     const progress = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    const newTime = progress * state.duration
+    // 用对齐后的最大时长计算绝对时间，确保两路 seek 基准一致
+    const alignedDuration = props.trackB
+      ? Math.max(stateA.realDuration, stateB.realDuration)
+      : state.realDuration
+    const newTime = progress * alignedDuration
     ws.seekTo(progress)
     // 用户主动 seek 时精确同步对方轨道
     if (props.trackB) {
@@ -501,54 +545,59 @@ async function loadAudio(track) {
     })
   }
 
-  ws.on('ready', () => {
-    state.duration = ws.getDuration()
-    state.isLoading = false
-    state.loadProgress = 100
-    state.loadError = null
-    // 从 localStorage 恢复书签与批注
-    const storageKey = config.src || config.file?.name
-    if (storageKey) {
-      const saved = localStorage.getItem(`vp-bookmarks:${storageKey}`)
-      if (saved) {
-        try { state.bookmarks = JSON.parse(saved) } catch (_) {}
-      }
-      const savedAnn = localStorage.getItem(`vp-annotations:${storageKey}`)
-      if (savedAnn) {
-        try { state.annotations = JSON.parse(savedAnn) } catch (_) {}
-      }
-    }
-    // 标准模式：静音检测在首次播放时懒初始化（需要用户手势才能让 AudioContext 以 running 状态启动）
+  // 防止 alignDurations 触发的二次 ready 重复初始化事件监听
+  let _wsReadyOnce = false
 
-    // 始终启用拖拽选区（无需开关按钮）
-    state.regions.enableDragSelection({
-      color: regionColor(track.id),
-    })
-    // region-initialized：拖拽开始时元素刚创建，此时清除 handle border
-    state.regions.on('region-initialized', (region) => {
-      if (region.element) {
-        region.element.querySelectorAll('[part~="region-handle-left"],[part~="region-handle-right"]')
-          .forEach(el => { el.style.borderLeft = 'none'; el.style.borderRight = 'none' })
+  ws.on('ready', () => {
+    if (!_wsReadyOnce) {
+      _wsReadyOnce = true
+
+      // 记录真实音频时长（对齐后不再修改）
+      state.realDuration = ws.getDuration()
+      state.duration = state.realDuration
+      state.isLoading = false
+      state.loadProgress = 100
+      state.loadError = null
+
+      // 从 localStorage 恢复书签
+      const storageKey = config.src || config.file?.name
+      if (storageKey) {
+        const saved = localStorage.getItem(`vp-bookmarks:${storageKey}`)
+        if (saved) {
+          try { state.bookmarks = JSON.parse(saved) } catch (_) {}
+        }
       }
-    })
-    const unsubCreated = state.regions.on('region-created', (region) => {
-      state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
-      updateToolbar(track, region)
-      ws.setTime(region.start)
-      if (!_syncingRegion) syncRegionToOther(track, region)
-    })
-    const unsubUpdated = state.regions.on('region-updated', (region) => {
-      updateToolbar(track, region)
-      syncRegionToOther(track, region)
-    })
-    const unsubRemoved = state.regions.on('region-removed', () => {
-      // 同步中或还有选区时不清空 toolbar
-      if (_syncingRegion) return
-      if (state.regions.getRegions().length === 0) {
-        state.toolbar = { visible: false, left: 0, region: null }
-      }
-    })
-    regionListeners[track.id] = [unsubCreated, unsubUpdated, unsubRemoved]
+
+      // 始终启用拖拽选区
+      state.regions.enableDragSelection({ color: regionColor(track.id) })
+
+      state.regions.on('region-initialized', (region) => {
+        if (region.element) {
+          region.element.querySelectorAll('[part~="region-handle-left"],[part~="region-handle-right"]')
+            .forEach(el => { el.style.borderLeft = 'none'; el.style.borderRight = 'none' })
+        }
+      })
+      const unsubCreated = state.regions.on('region-created', (region) => {
+        state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
+        updateToolbar(track, region)
+        ws.setTime(region.start)
+        if (!_syncingRegion) syncRegionToOther(track, region)
+      })
+      const unsubUpdated = state.regions.on('region-updated', (region) => {
+        updateToolbar(track, region)
+        syncRegionToOther(track, region)
+      })
+      const unsubRemoved = state.regions.on('region-removed', () => {
+        if (_syncingRegion) return
+        if (state.regions.getRegions().length === 0) {
+          state.toolbar = { visible: false, left: 0, region: null }
+        }
+      })
+      regionListeners[track.id] = [unsubCreated, unsubUpdated, unsubRemoved]
+    }
+
+    // 每次 ready（含对齐后触发的）都尝试对齐，_durationsAligned 保证只执行一次
+    alignDurations()
   })
 
   ws.on('finish', () => { state.isPlaying = false })
@@ -808,7 +857,6 @@ function exportReportBoth() {
       audio: track.config.src || track.config.file?.name || 'unknown',
       duration: track.state.duration,
       bookmarks: track.state.bookmarks,
-      annotations: track.state.annotations,
     })),
   }
   const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
@@ -1073,21 +1121,6 @@ async function downloadRegion(track) {
   }
 }
 
-function addAnnotation(track) {
-  const region = track.state.toolbar.region
-  if (!region) return
-  const note = prompt('添加批注（双击书签可删除）')
-  if (!note) return
-  const ann = {
-    id: Date.now().toString(),
-    start: region.start,
-    end: region.end,
-    note,
-  }
-  track.state.annotations.push(ann)
-  const key = track.config.src || track.config.file?.name
-  if (key) localStorage.setItem(`vp-annotations:${key}`, JSON.stringify(track.state.annotations))
-}
 
 function clearRegion(track) {
   track.state.regions.getRegions().forEach(r => r.remove())
@@ -1177,7 +1210,6 @@ function exportReport(track) {
     duration: track.state.duration,
     exportedAt: new Date().toISOString(),
     bookmarks: track.state.bookmarks,
-    annotations: track.state.annotations,
   }
   const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')

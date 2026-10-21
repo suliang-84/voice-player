@@ -1,6 +1,19 @@
-# VoicePlayer 波纹语音播放器
+# VoicePlayer 语音播放器
 
-基于 **Vite + Vue3 + WaveSurfer.js** 的波纹语音播放器组件。核心设计为单文件组件（SFC），可直接复制到任意 Vue3 项目使用。
+基于 **Vite 5 + Vue 3 + WaveSurfer.js 7** 的双轨语音播放器组件。核心设计为单文件组件（SFC），可直接复制到任意 Vue 3 项目使用。
+
+---
+
+## 技术栈
+
+| 技术 | 版本 | 用途 |
+|------|------|------|
+| Vue | 3.4 | 前端框架（Composition API） |
+| Vite | 5.0 | 构建工具 |
+| WaveSurfer.js | 7.8 | 波形渲染 + 音频播放核心 |
+| Element Plus | 2.14 | 设置对话框 UI 组件 |
+| SCSS | 1.105 | 样式预处理 |
+| vite-plugin-svg-icons | 2.0 | SVG 图标自动注册 |
 
 ---
 
@@ -8,169 +21,251 @@
 
 ```
 voice-player/
-├── index.html                        # 入口 HTML
+├── index.html
 ├── package.json
 ├── vite.config.js
 ├── README.md
-├── 2026-10-10-voice-player.md        # 实现计划文档
-├── waveform-preview.html             # 波形样式独立预览页
 ├── scripts/
-│   └── gen-peaks.js                  # 服务器批处理脚本（Node.js）
-├── src/
-│   ├── main.js                       # Vue 应用入口
-│   ├── App.vue                       # Demo 演示页
-│   └── components/
-│       └── VoicePlayer.vue           # ⭐ 核心组件（可独立复制使用）
-└── docs/
-    └── superpowers/
-        └── specs/
-            └── 2026-10-10-voice-player-design.md  # 详细设计文档
+│   └── gen-peaks.js              # 超长音频 peaks 预生成脚本（Node.js）
+├── public/
+│   ├── demo.mp3                  # 单轨演示音频（39 KB）
+│   ├── demo-a.mp3                # 双轨 A 路演示音频（8.6 MB，约 9 分钟）
+│   └── demo-b.mp3                # 双轨 B 路演示音频（13 MB，约 14 分钟）
+└── src/
+    ├── main.js                   # Vue 应用入口（注册全局组件和插件）
+    ├── App.vue                   # 演示页（双轨模式）
+    ├── components/
+    │   ├── VoicePlayer.vue       # ⭐ 核心播放器组件（约 1650 行）
+    │   └── SvgIcon.vue           # SVG 图标包装组件
+    └── icons/                    # SVG 图标库
+        ├── play.svg
+        ├── pause.svg
+        ├── previous.svg
+        ├── next.svg
+        ├── rewind.svg
+        ├── forward.svg
+        ├── volume_up.svg
+        ├── volume_off.svg
+        ├── download.svg
+        └── setting.svg
 ```
 
 ---
 
-## 代码框架描述
+## 功能列表
+
+### 顶部控制栏
+
+| 控件 | 功能 |
+|------|------|
+| 上一条 | 跳到音频开头（`ws.setTime(0)`） |
+| 回退 | 后退 N 秒（默认 5 秒，可在设置中调整） |
+| 播放/暂停 | AB 双轨同步播放/暂停 |
+| 快进 | 快进 N 秒 |
+| 下一条 | 跳到音频结尾 |
+| 静音/取消静音 | AB 双轨统一静音 |
+| 音量滑块 | AB 双轨统一音量控制 |
+| 设置按钮 | 打开设置对话框 |
+| 下载按钮 | 下载 AB 双轨音频文件 |
+
+### 设置对话框
+
+| 配置项 | 选项 |
+|--------|------|
+| 播放倍数 | 0.5x / 0.75x / 1x / 1.25x / 1.5x / 1.75x / 2x |
+| 快进/后退秒数 | 1–60 秒（数字输入） |
+| 播放模式 | 单条播放 / 顺序播放 |
+| 主题 | 亮色 / 深色 |
+
+> 点击"确认"后配置生效，点击"取消"或遮罩层不保存。
+
+### 轨道级控制（每路独立）
+
+| 控件 | 位置 | 功能 |
+|------|------|------|
+| 轨道标签 | 左上角 | 显示 A/B 路名称 |
+| 时间显示 | 右侧 | `当前时间 / 总时长` |
+| 静音按钮 | 右侧 | 单独静音当前轨道 |
+| 下载按钮 | 右侧 | 单独下载当前轨道音频 |
+
+### 波形交互
+
+| 操作 | 功能 |
+|------|------|
+| 点击波形 | 跳转到对应位置（AB 双轨同步） |
+| 拖拽波形 | 创建选区，弹出浮动工具条 |
+| 滚轮上滚 | 放大波形（最大 200x） |
+| 滚轮下滚 | 缩小波形（最小 1x） |
+| 双击波形 | 添加书签（zoom > 1 时双击恢复原比例） |
+
+### 选区浮动工具条
+
+拖拽波形后，选区上方弹出工具条（AB 双轨同步选区范围）：
+
+| 按钮 | 功能 |
+|------|------|
+| ↓ | 下载选区片段（WAV 格式） |
+| ✎ | 为选区添加文字批注 |
+| ✕ | 清除选区 |
+
+### 键盘快捷键
+
+聚焦轨道后生效：
+
+| 按键 | 功能 |
+|------|------|
+| `Space` | 播放 / 暂停 |
+| `←` | 后退 5 秒 |
+| `→` | 快进 5 秒 |
+| `Shift + ←` | 后退 1 秒 |
+| `Shift + →` | 快进 1 秒 |
+| `[` | 跳到选区起点 |
+| `]` | 跳到选区终点 |
+
+### 书签
+
+- 双击波形添加书签（弹出输入框，可自定义名称）
+- 点击书签线跳转到对应时间
+- 双击书签线删除书签
+- 书签数据持久化到 `localStorage`（以音频 URL 为 key）
+
+### 数据持久化
+
+| 数据 | localStorage Key |
+|------|-----------------|
+| 书签 | `vp-bookmarks:{audioUrl}` |
+| 批注 | `vp-annotations:{audioUrl}` |
+
+---
+
+## 核心架构
 
 ### VoicePlayer.vue 内部结构
 
 ```
 VoicePlayer.vue
 ├── <template>
-│   ├── AB 同步按钮（双轨模式）
-│   ├── v-for 轨道列表（A路 / B路）
-│   │   ├── 轨道头部（标签 + 加载状态 / 错误提示）
-│   │   ├── 加载进度条
-│   │   ├── 波形区域（.vp-waveform-wrap）
-│   │   │   ├── 浮动工具条（选区操作：播放/循环/下载/批注/清除）
-│   │   │   ├── 书签层（.vp-bookmarks-layer）
-│   │   │   ├── 上半波形（WaveSurfer 渲染）
-│   │   │   └── 下半镜像（rAF drawImage 实时镜像）
-│   │   └── 控制栏（播放/时间/音量/速度/选区/跳过空音/导出/下载）
-│   └── AB 音量差可视化（双轨模式）
+│   ├── 顶部控制栏（.vp-control-bar）
+│   │   ├── 左侧播放控制（.vp-playback-controls）
+│   │   └── 右侧辅助控制（.vp-aux-controls）
+│   ├── 设置对话框（<teleport to="body">）
+│   ├── 轨道列表（.vp-tracks-dual）
+│   │   └── v-for 轨道（.vp-track）
+│   │       ├── 轨道头部（标签 + 时间 + 静音 + 下载）
+│   │       ├── 加载进度条
+│   │       └── 波形区域（.vp-waveform-wrap）
+│   │           ├── 浮动工具条（选区操作）
+│   │           ├── 书签层（绝对定位）
+│   │           └── WaveSurfer 渲染容器（.vp-waveform-top）
+│   └── 统一滚动条（波形放大时显示）
 │
 ├── <script setup>
-│   ├── Props 定义（trackA / trackB / options）
-│   ├── 常量（SPEEDS 速度档位）
-│   ├── 状态工厂 createTrackState(id) → stateA / stateB
-│   ├── tracks 计算属性（单/双轨列表）
-│   ├── DOM refs（waveRefs / mirrorRefs / wrapRefs）
-│   ├── buildColorMap()          # 频谱图颜色映射
-│   ├── initWaveSurfer(track)    # WaveSurfer 实例化 + 事件绑定
-│   ├── loadAudio(track)         # URL / File / Peaks 三模式加载
-│   ├── 播放控制函数群            # togglePlay / setVolume / cycleSpeed ...
-│   ├── 跳过空音                  # startSilenceDetection / toggleSkipSilence
-│   ├── 选区与浮动工具条          # toggleRegionMode / playRegion / downloadRegion ...
-│   ├── 键盘快捷键               # handleKeydown
-│   ├── 书签                     # addBookmark / removeBookmark
-│   ├── 导出报告                  # exportReport
-│   └── 生命周期（onMounted / onBeforeUnmount / watch）
+│   ├── Props 定义
+│   ├── 轨道状态工厂 createTrackState() → stateA / stateB
+│   ├── 统一滚动条逻辑（rAF 同步）
+│   ├── initWaveSurfer()       WaveSurfer 实例化 + 事件绑定
+│   ├── loadAudio()            音频加载 + 事件监听
+│   ├── 播放控制函数群
+│   ├── 双轨统一控制函数群
+│   ├── 跳过空音检测（Web Audio API AnalyserNode）
+│   ├── 选区 + 浮动工具条管理
+│   ├── 书签 + 批注管理
+│   ├── WAV 编码（audioBufferToWav）
+│   ├── 键盘快捷键处理
+│   └── 生命周期钩子
 │
-└── <style scoped>
-    └── 17 个 --vp-* CSS 变量 + 所有组件样式
+└── <style lang="scss" scoped>
+    ├── 15 个 --vp-* CSS 变量（亮色默认值）
+    └── 所有组件样式
 ```
 
-### 关键技术点
+### WaveSurfer 配置要点
 
-| 模块 | 实现方式 |
-|------|---------|
-| 波形渲染 | WaveSurfer.js v7，支持 `mirror-bar` / `mirror-spectrogram` / `bar` / `line` |
-| 镜像波形 | 上半由 WaveSurfer 渲染，下半通过 `requestAnimationFrame` + `ctx.drawImage` 实时同步 |
-| 超长音频 | 传入预生成 `peaks` 数据跳过浏览器解码，渲染瞬时完成 |
-| 跳过空音 | 标准模式：Web Audio API `AnalyserNode` 实时 RMS 检测；Peaks 模式：`silences` 区间跳转 |
-| 选区下载 | Web Audio API 裁剪 `AudioBuffer` → WAV 编码 → Blob 下载，无外部依赖 |
-| 主题系统 | 17 个 `--vp-*` CSS 变量，外部通过 `style` 属性覆盖 |
-| 持久化 | 书签、批注存储于 `localStorage`，以音频 URL 为 key |
+```js
+WaveSurfer.create({
+  container: waveContainer,
+  media: mediaEl,          // 传入原生 <audio>，跳过 WaveSurfer 内部完整解码，支持流式播放
+  height: 'auto',          // 自适应容器高度
+  barHeight: 0.8,          // 波形振幅系数（基于 normalize）
+  normalize: true,         // 峰值归一化，使波形始终撑满容器高度
+  interact: false,         // 禁用 WaveSurfer 内置交互，由外层自定义实现
+  autoCenter: true,        // 播放时游标自动居中
+  autoScroll: true,        // 播放时自动滚动跟随
+  hideScrollbar: true,     // 隐藏每路内置滚动条（改用统一滚动条）
+  plugins: [RegionsPlugin],
+})
+```
 
----
+### 统一滚动条实现原理
 
-## 功能描述
+WaveSurfer v7 使用 Shadow DOM，滚动容器结构为：
 
-### 核心功能
+```
+waveRefs[id]（我们的容器 div）
+  └── div（shadow host，由 WaveSurfer 创建）
+        └── shadow root
+              └── div.scroll（实际滚动容器）
+                    └── div.wrapper（波形画布）
+```
 
-| 功能 | 说明 |
-|------|------|
-| 波形渲染 | 加载音频后渲染完整文件波形，默认镜像对称柱状 |
-| 双轨支持 | A/B 两路完全独立控制；B 路不传则自动降级为单轨 |
-| 文件加载 | 支持 URL 字符串和本地 `File` 对象两种方式 |
-| 超长音频 | 传入预生成 `peaks.json` + `silences.json`，跳过浏览器解码 |
+通过 `firstElementChild.shadowRoot.querySelector('.scroll')` 访问滚动元素，使用 `ws.getScroll()` / `ws.setScroll()` 读写位置，`requestAnimationFrame` 循环同步 AB 双轨位置。
 
-### 播放控制
+### 原生 Audio 流式播放
 
-| 控件 | 功能 |
-|------|------|
-| ▶ / ⏸ | 播放 / 暂停 |
-| 时间显示 | 当前时间 / 总时长，点击复制到剪贴板 |
-| 🔊 + 滑块 | 音量控制（0–100%），点击图标静音/恢复 |
-| 速度按钮 | 循环切换 0.5x / 0.75x / 1x / 1.25x / 1.5x / 2x |
-| ⟳ 选区 | 拖拽波形创建选区，出现浮动工具条 |
-| 静 | 跳过空音开关（默认开启） |
-| 📄 | 导出书签 + 批注 JSON 报告 |
-| ↓ | 下载完整音频文件 |
+为解决大文件播放卡顿，使用原生 `<audio>` 元素替代 WaveSurfer 内部加载：
 
-### 选区浮动工具条
+```js
+const mediaEl = document.createElement('audio')
+mediaEl.src = url
+mediaEl.preload = 'auto'
+mediaEl.crossOrigin = 'anonymous'
+// 传入 WaveSurfer，跳过其内部 fetch + 解码流程
+WaveSurfer.create({ media: mediaEl, ... })
+```
 
-拖拽波形后，选区上方弹出工具条：
-
-| 按钮 | 功能 |
-|------|------|
-| ▶ | 仅播放选区片段 |
-| ⟳ | 循环播放选区 |
-| ↓ | 下载选区片段（WAV 格式） |
-| ✎ | 为选区添加文字批注 |
-| ✕ | 清除选区 |
-
-### 增强功能
-
-| 功能 | 说明 |
-|------|------|
-| 键盘快捷键 | 空格=播放/暂停，←/→=±5s，Shift+←/→=±1s，`[`/`]`=跳到选区起/终点 |
-| 书签 | 双击波形添加书签，点击跳转，再次双击删除，自动持久化到 localStorage |
-| 波形缩放 | 鼠标滚轮缩放波形（1x–200x），放大后支持横向滚动 |
-| AB 同步 | 开启后 A 路跳转自动联动 B 路到相同时间点 |
-| AB 音量差 | 双轨底部实时显示两路音量差异色条（绿=正常，红=差异大） |
-| 加载进度条 | 大文件加载时显示解码进度百分比 |
-| 错误处理 | 加载失败显示错误信息 + 重试按钮 |
-
----
-
-## 波形类型配置
-
-通过 `options.waveformType` 切换：
-
-| 类型 | 说明 |
-|------|------|
-| `mirror-bar`（默认） | 镜像对称柱状波形 |
-| `mirror-spectrogram` | 镜像对称频谱图（实时 FFT） |
-| `bar` | 标准单向柱状波形 |
-| `line` | 连续线形波形 |
+浏览器原生支持边缓冲边播放，彻底解决需要完整解码才能播放的性能瓶颈。
 
 ---
 
 ## 主题定制（CSS 变量）
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `--vp-bg` | `#ffffff` | 播放器背景色 |
-| `--vp-border-color` | `#e5e7eb` | 轨道边框颜色 |
-| `--vp-wave-color` | `#93c5fd` | 波形未播放颜色 |
-| `--vp-progress-color` | `#2563eb` | 波形已播放颜色 |
-| `--vp-cursor-color` | `#1d4ed8` | 播放游标颜色 |
-| `--vp-region-color` | `rgba(37,99,235,0.2)` | 选区填充色 |
-| `--vp-btn-color` | `#2563eb` | 按钮颜色 |
-| `--vp-btn-hover-bg` | `#eff6ff` | 按钮 hover 背景 |
-| `--vp-label-color` | `#374151` | 标签文字颜色 |
-| `--vp-time-color` | `#6b7280` | 时间文字颜色 |
-| `--vp-slider-color` | `#2563eb` | 滑块颜色 |
-| `--vp-radius` | `8px` | 圆角大小 |
-| `--vp-bookmark-color` | `#f59e0b` | 书签颜色 |
-| `--vp-error-color` | `#ef4444` | 错误提示颜色 |
-| `--vp-progress-bar-color` | `#2563eb` | 加载进度条颜色 |
-| `--vp-diff-ok-color` | `#22c55e` | AB 音量差正常颜色 |
-| `--vp-diff-warn-color` | `#ef4444` | AB 音量差异常颜色 |
+在组件外层覆盖变量即可切换主题：
+
+| 变量 | 亮色默认值 | 深色值 | 说明 |
+|------|-----------|--------|------|
+| `--vp-bg` | `#ffffff` | `#0f172a` | 播放器背景 |
+| `--vp-border-color` | `#e0e7ff` | `#312e81` | 轨道边框 |
+| `--vp-wave-color` | `#818cf8` | — | 波形未播放色 |
+| `--vp-progress-color` | `#6366f1` | `#a5b4fc` | 波形已播放色 |
+| `--vp-cursor-color` | `#4f46e5` | `#c7d2fe` | 播放游标色 |
+| `--vp-region-color` | `rgba(99,102,241,0.15)` | `rgba(165,180,252,0.2)` | 选区填充色 |
+| `--vp-btn-color` | `#6366f1` | `#a5b4fc` | 按钮颜色 |
+| `--vp-label-color` | `#374151` | `#e0e7ff` | 标签文字色 |
+| `--vp-time-color` | `#6b7280` | `#94a3b8` | 时间文字色 |
+| `--vp-slider-color` | `#6366f1` | `#a5b4fc` | 滑块颜色 |
+| `--vp-radius` | `8px` | — | 圆角大小 |
+| `--vp-bookmark-color` | `#f59e0b` | `#fbbf24` | 书签颜色 |
+| `--vp-error-color` | `#ef4444` | — | 错误提示色 |
+| `--vp-progress-bar-color` | `#6366f1` | `#a5b4fc` | 加载进度条色 |
+
+主题也可通过播放器内置设置对话框在运行时切换（亮色/深色）。
 
 ---
 
-## 本地启动
+## 已知问题
+
+| 问题 | 原因 | 状态 |
+|------|------|------|
+| 波形放大后底部统一滚动条未显示 | WaveSurfer Shadow DOM 访问方式错误 | 修复中 |
+| 播放时进度条跳跃感 | WaveSurfer `scrollIntoView` 在高缩放时直接赋值 `scrollLeft` | 已通过统一滚动条规避 |
+| 波形缩放性能卡顿 | 高频 wheel 事件触发多次重绘 | 已加 150ms 节流优化 |
+| 跨域音频无法下载选区 | Web Audio API CORS 限制 | 需服务端配置响应头 |
+| SSR 不支持 | WaveSurfer 依赖浏览器 Web API | 需在客户端挂载 |
+| AudioContext 挂起 | 浏览器要求用户手势才能启动 | 已在首次播放时懒初始化 |
+
+---
+
+## 本地开发
 
 ```bash
 # 安装依赖
@@ -179,55 +274,76 @@ npm install
 # 启动开发服务器
 npm run dev
 # → http://localhost:5173
-```
 
-Demo 页面展示了 4 种使用场景：单轨、文件上传、双轨暗色主题、频谱图模式。
-
----
-
-## 打包
-
-```bash
+# 生产构建
 npm run build
 ```
 
-产物输出到 `dist/`，可直接部署到静态服务器。
-
 ---
 
-## 在其他项目中引入
+## 集成到其他 Vue 3 项目
 
-### 第一步：安装依赖
+### 1. 安装核心依赖
 
 ```bash
-npm install wavesurfer.js
+npm install wavesurfer.js element-plus vite-plugin-svg-icons
 ```
 
-### 第二步：复制组件文件
+### 2. 配置 vite.config.js
 
-将 `src/components/VoicePlayer.vue` 复制到目标项目的组件目录，无需其他文件。
+```js
+import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
+import path from 'path'
 
-### 第三步：使用组件
+export default defineConfig({
+  plugins: [
+    vue(),
+    createSvgIconsPlugin({
+      iconDirs: [path.resolve(process.cwd(), 'src/icons')],
+      symbolId: 'icon-[name]',
+    }),
+  ],
+})
+```
+
+### 3. 复制文件
+
+```
+src/components/VoicePlayer.vue  →  目标项目组件目录
+src/components/SvgIcon.vue      →  目标项目组件目录
+src/icons/                      →  目标项目 src/icons/
+```
+
+### 4. 注册全局组件（main.js）
+
+```js
+import 'virtual:svg-icons-register'
+import SvgIcon from './components/SvgIcon.vue'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
+
+app.component('SvgIcon', SvgIcon)
+app.use(ElementPlus)
+```
+
+### 5. 使用示例
 
 ```vue
 <template>
-  <!-- 单轨 URL -->
-  <VoicePlayer :track-a="{ src: 'https://example.com/audio.mp3', label: '录音' }" />
-
-  <!-- 单轨 File 对象 -->
-  <VoicePlayer :track-a="{ file: fileObject, label: '本地录音' }" />
-
-  <!-- 双轨 -->
+  <!-- 双轨模式 -->
   <VoicePlayer
-    :track-a="{ src: urlA, label: 'A路' }"
-    :track-b="{ src: urlB, label: 'B路' }"
+    :track-a="{ src: '/audio/track-a.mp3', label: '主动方' }"
+    :track-b="{ src: '/audio/track-b.mp3', label: '接收方' }"
   />
 
-  <!-- 频谱图模式 + 自定义主题 -->
+  <!-- 单轨模式 -->
   <VoicePlayer
-    :track-a="{ src: url }"
-    :options="{ waveformType: 'mirror-spectrogram', spectrogramColorMap: 'heatmap' }"
-    style="--vp-bg: #0f172a; --vp-wave-color: #4f46e5;"
+    :track-a="{ src: '/audio/recording.mp3', label: '录音' }"
+  />
+
+  <!-- 本地文件上传 -->
+  <VoicePlayer
+    :track-a="{ file: selectedFile, label: '本地文件' }"
   />
 </template>
 
@@ -236,85 +352,45 @@ import VoicePlayer from '@/components/VoicePlayer.vue'
 </script>
 ```
 
-### Props 说明
+### Props 类型定义
 
 ```ts
-// 轨道配置
 interface TrackConfig {
-  src?: string                              // 音频 URL
-  file?: File                              // 本地 File 对象
-  label?: string                           // 轨道标签
-  peaks?: number[][]                       // 预生成峰值（超长音频用）
-  duration?: number                        // 总时长秒数（peaks 模式必填）
-  silences?: Array<{ start: number, end: number }>  // 静音区间（peaks 模式跳过空音用）
+  src?: string      // 音频文件 URL（与 file 二选一）
+  file?: File       // 本地 File 对象（与 src 二选一）
+  label?: string    // 轨道标签名称
 }
 
-// 外观配置
 interface PlayerOptions {
-  waveformType?: 'mirror-bar' | 'mirror-spectrogram' | 'bar' | 'line'
   waveColor?: string
   progressColor?: string
   cursorColor?: string
-  barWidth?: number
-  barGap?: number
-  height?: number
-  spectrogramColorMap?: 'theme' | 'heatmap' | string  // 频谱图配色
-  fftSize?: number                                      // 频谱分辨率，默认 2048
+  height?: number | 'auto'
 }
 
 // 组件 Props
 props: {
   trackA: TrackConfig      // 必填
   trackB?: TrackConfig     // 可选，不传则单轨模式
-  options?: PlayerOptions  // 可选
+  options?: PlayerOptions  // 可选，覆盖默认外观配置
 }
 ```
 
 ---
 
-## 超长音频处理（Peaks 模式）
+## 超长音频优化建议
 
-对于超过 30 分钟的音频，建议在服务器预生成 peaks 数据：
+对于 30 分钟以上的音频文件，建议在服务端预生成 peaks 数据（WaveSurfer 支持传入 peaks 跳过客户端解码）。项目中的 `scripts/gen-peaks.js` 提供了基于 Node.js 的批量处理脚本。
 
-### 服务器批处理（需安装 ffmpeg 和 Node.js）
-
-```bash
-# 批量处理目录下所有 mp3
-for f in /data/audio/*.mp3; do
-  base="${f%.mp3}"
-  ffmpeg -i "$f" -filter:a aformat=channel_layouts=mono \
-    -f s16le -ar 8000 pipe:1 2>/dev/null | \
-    node scripts/gen-peaks.js "$base"
-done
-```
-
-执行后每个音频文件旁生成：
-- `audio.peaks.json` — 波形峰值（约 8KB/小时）
-- `audio.silences.json` — 静音区间
-
-### 前端加载
-
-```js
-const base = audioUrl.replace(/\.(mp3|wav|ogg|m4a)$/, '')
-const [peaks, silences] = await Promise.all([
-  fetch(`${base}.peaks.json`).then(r => r.json()),
-  fetch(`${base}.silences.json`).then(r => r.json()),
-])
-```
-
-```vue
-<VoicePlayer
-  :track-a="{ src: audioUrl, peaks, silences, duration: 3720 }"
-/>
-```
+波形缩放性能优化已通过 150ms 节流实现，后续可进一步考虑 WebWorker 解码 + 离线 peaks 缓存方案。
 
 ---
 
-## 注意事项
+## 浏览器兼容性
 
-| 事项 | 说明 |
-|------|------|
-| 跨域音频 | 服务端需配置 `Access-Control-Allow-Origin` 响应头 |
-| SSR | WaveSurfer.js 依赖 Web API，不支持 SSR，需确保在客户端挂载 |
-| 浏览器兼容 | Chrome 80+ / Firefox 75+ / Safari 14+ |
-| 选区下载 | 跨域音频无法使用选区下载（Web Audio API 限制），需服务端配置 CORS |
+| 浏览器 | 最低版本 | 备注 |
+|--------|----------|------|
+| Chrome | 80+ | 推荐 |
+| Firefox | 75+ | |
+| Safari | 14+ | |
+| Edge | 80+ | |
