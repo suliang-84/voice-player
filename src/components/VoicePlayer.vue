@@ -33,11 +33,14 @@
       </div>
       <!-- 右侧：辅助控制 -->
       <div class="vp-aux-controls">
-        <button class="vp-btn" @click="openSettings" title="设置">
-          <SvgIcon name="setting" size="20px" />
-        </button>
         <button class="vp-btn" @click="handleDownload" title="下载">
           <SvgIcon name="download" size="20px" />
+        </button>
+        <button class="vp-btn" @click="toggleTheme" title="切换主题">
+          <SvgIcon name="theme" size="20px" />
+        </button>
+        <button class="vp-btn" @click="openSettings" title="设置">
+          <SvgIcon name="setting" size="20px" />
         </button>
       </div>
     </div>
@@ -76,14 +79,6 @@
               <el-select v-model="draftSettings.playMode" class="vp-settings-select">
                 <el-option label="单条播放" value="single" />
                 <el-option label="顺序播放" value="sequence" />
-              </el-select>
-            </div>
-            <!-- 主题 -->
-            <div class="vp-settings-row">
-              <label class="vp-settings-label">主题</label>
-              <el-select v-model="draftSettings.theme" class="vp-settings-select">
-                <el-option label="亮色" value="light" />
-                <el-option label="深色" value="dark" />
               </el-select>
             </div>
           </div>
@@ -231,6 +226,17 @@ const draftSettings = reactive({
   playMode: 'single',
   theme: 'light',
 })
+
+function toggleTheme() {
+  const newTheme = theme.value === 'light' ? 'dark' : 'light'
+  theme.value = newTheme
+  draftSettings.theme = newTheme
+  if (rootEl.value) {
+    const vars = newTheme === 'dark' ? DARK_THEME : {}
+    Object.keys(DARK_THEME).forEach(k => rootEl.value.style.removeProperty(k))
+    Object.entries(vars).forEach(([k, v]) => rootEl.value.style.setProperty(k, v))
+  }
+}
 
 function openSettings() {
   draftSettings.speed = currentSpeed.value
@@ -1309,6 +1315,7 @@ button { cursor: pointer !important; }
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  margin-right: 10px;
 }
 
 .vp-ab-volume-slider { width: 90px; }
