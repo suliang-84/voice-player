@@ -470,7 +470,12 @@ async function initWaveSurfer(track) {
     if (Math.abs(e.clientX - _mouseDownX) >= 5) return  // 拖拽，跳过 seek
     if (!state.realDuration) return
     const rect = waveContainer.getBoundingClientRect()
-    const progress = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    // 放大时需要加上已滚动的偏移量，再除以总宽度，才能得到正确进度
+    const clickX = e.clientX - rect.left
+    const scrollEl = getWsScrollEl(track.id)
+    const scrollLeft = scrollEl ? scrollEl.scrollLeft : 0
+    const totalWidth = scrollEl ? scrollEl.scrollWidth : rect.width
+    const progress = Math.max(0, Math.min(1, (scrollLeft + clickX) / totalWidth))
     // 用对齐后的最大时长计算绝对时间，确保两路 seek 基准一致
     const alignedDuration = props.trackB
       ? Math.max(stateA.realDuration, stateB.realDuration)
