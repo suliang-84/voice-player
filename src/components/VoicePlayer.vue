@@ -320,16 +320,25 @@ async function initWaveSurfer(track) {
 
   const opt = props.options || {}
 
+  // ── 创建原生 audio 元素，交由浏览器流式播放，避免 WaveSurfer 完整下载解码 ──
+  const url = config.file
+    ? (state.objectUrl = URL.createObjectURL(config.file))
+    : config.src
+  const mediaEl = document.createElement('audio')
+  mediaEl.src = url || ''
+  mediaEl.preload = 'auto'
+  mediaEl.crossOrigin = 'anonymous'
+
   // ── 构建插件列表 ────────────────────────────────────────────────────
   const regions = RegionsPlugin.create()
   const plugins = [regions]
 
-  // SkipSilencePlugin not available in wavesurfer.js 7.x — handled in Task 6
   const skipSilencePlugin = null
 
-  // ── 创建 WaveSurfer 实例 ────────────────────────────────────────────
+  // ── 创建 WaveSurfer 实例（传入 media，跳过内部 fetch+decode）────────
   const ws = WaveSurfer.create({
     container: waveContainer,
+    media: mediaEl,
     waveColor: opt.waveColor || (props.trackB
       ? (track.id === 'A' ? '#bfdef7' : '#b7e6e1')
       : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-wave-color').trim() : '') || '#bfdef7'),
@@ -340,7 +349,7 @@ async function initWaveSurfer(track) {
       ? (track.id === 'A' ? '#2c91e4' : '#0fab9d')
       : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
     height: opt.height ?? 'auto',
-    interact: false,  // 禁用内置 click-to-seek，由下方手动判断点击/拖拽
+    interact: false,
     plugins,
   })
 
@@ -408,9 +417,23 @@ async function loadAudio(track) {
   const ws = state.ws
 
   // ── 绑定加载事件 ──────────────────────────────────────────────────────
-  ws.on('loading', (percent) => {
-    state.loadProgress = percent
-  })
+  // 使用 mediaEl 原生事件追踪缓冲进度（替代 ws loading 事件）
+  const mediaEl = ws.getMediaElement()
+  if (mediaEl) {
+    mediaEl.addEventListener('progress', () => {
+      if (mediaEl.duration && mediaEl.buffered.length) {
+        state.loadProgress = Math.round(mediaEl.buffered.end(mediaEl.buffered.length - 1) / mediaEl.duration * 100)
+      }
+    })
+    mediaEl.addEventListener('canplay', () => {
+      state.isLoading = false
+      state.loadProgress = 100
+    })
+    mediaEl.addEventListener('error', () => {
+      state.isLoading = false
+      state.loadError = '音频加载失败，请检查文件路径或网络'
+    })
+  }
 
   ws.on('ready', () => {
     state.duration = ws.getDuration()
@@ -462,11 +485,6 @@ async function loadAudio(track) {
     regionListeners[track.id] = [unsubCreated, unsubUpdated, unsubRemoved]
   })
 
-  ws.on('error', (err) => {
-    state.isLoading = false
-    state.loadError = err?.message || '音频加载失败，请检查文件路径或网络'
-  })
-
   ws.on('finish', () => { state.isPlaying = false })
 
   // currentTime 节流：每 250ms 才更新响应式状态，避免高频触发 Vue 重渲染
@@ -506,26 +524,8 @@ async function loadAudio(track) {
     }
   })
 
-  // ── 解析 URL ──────────────────────────────────────────────────────────
-  const url = config.file
-    ? (state.objectUrl = URL.createObjectURL(config.file))
-    : config.src
-
-  if (!url) {
-    state.isLoading = false
-    return
-  }
-
   state.isLoading = true
   state.loadProgress = 0
-
-  if (config.peaks) {
-    // peaks 模式：跳过解码，直接渲染；第三参数为时长（秒）
-    ws.load(url, config.peaks, config.duration)
-  } else {
-    // 标准模式：WaveSurfer Web Worker 解码
-    ws.load(url)
-  }
 }
 
 // ── 重试加载 ─────────────────────────────────────────────────────────────
