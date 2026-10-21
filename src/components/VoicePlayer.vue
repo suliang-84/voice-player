@@ -172,6 +172,19 @@
     </div>
     </div><!-- end vp-tracks-dual wrapper -->
 
+    <!-- 统一滚动条（仅放大时显示） -->
+    <div v-if="unifiedScrollMax > 0" class="vp-unified-scroll">
+      <input
+        type="range"
+        min="0"
+        :max="unifiedScrollMax"
+        step="1"
+        :value="unifiedScrollLeft"
+        class="vp-unified-scrollbar"
+        @input="onUnifiedScroll($event.target.value)"
+      />
+    </div>
+
   </div>
 </template>
 
@@ -304,6 +317,56 @@ const wrapRefs = {}
 function setWaveRef(el, id) { if (el) waveRefs[id] = el }
 function setWrapRef(el, id) { if (el) wrapRefs[id] = el }
 
+// ── 统一滚动条 ──────────────────────────────────────────────────────────────
+const unifiedScrollLeft = ref(0)
+const unifiedScrollMax = ref(0)
+let _scrollRaf = null
+
+// WaveSurfer v7 结构：waveRefs[id] → firstElementChild (shadow host) → shadowRoot → .scroll
+function getWsScrollEl(trackId) {
+  const container = waveRefs[trackId]
+  if (!container) return null
+  const shadowHost = container.firstElementChild
+  if (!shadowHost?.shadowRoot) return null
+  return shadowHost.shadowRoot.querySelector('.scroll') || null
+}
+
+function updateUnifiedScrollMax() {
+  const el = getWsScrollEl('A') || getWsScrollEl('B')
+  if (!el) return
+  const max = el.scrollWidth - el.clientWidth
+  unifiedScrollMax.value = Math.max(0, max)
+}
+
+function onUnifiedScroll(val) {
+  const left = Number(val)
+  unifiedScrollLeft.value = left
+  for (const track of tracks.value) {
+    track.state.ws?.setScroll(left)
+  }
+}
+
+function startScrollSync() {
+  if (_scrollRaf) return
+  function tick() {
+    // 优先用 DOM 读取 scrollWidth/clientWidth，计算最大滚动量
+    const el = getWsScrollEl('A') || getWsScrollEl('B')
+    if (el) {
+      const max = el.scrollWidth - el.clientWidth
+      if (unifiedScrollMax.value !== max) unifiedScrollMax.value = Math.max(0, max)
+    }
+    // 用 WaveSurfer API 读取当前滚动位置（更可靠）
+    const ws = stateA.ws || stateB.ws
+    if (ws) unifiedScrollLeft.value = ws.getScroll()
+    _scrollRaf = requestAnimationFrame(tick)
+  }
+  _scrollRaf = requestAnimationFrame(tick)
+}
+
+function stopScrollSync() {
+  if (_scrollRaf) { cancelAnimationFrame(_scrollRaf); _scrollRaf = null }
+}
+
 // ── 选区颜色（按轨道 ID） ──────────────────────────────────────────────
 function regionColor(trackId) {
   if (props.trackB) return trackId === 'A' ? 'rgba(44,145,228,0.1)' : 'rgba(15,171,157,0.1)'
@@ -352,6 +415,7 @@ async function initWaveSurfer(track) {
     interact: false,
     autoCenter: true,
     autoScroll: true,
+    hideScrollbar: true,
     plugins,
   })
 
@@ -546,9 +610,11 @@ onMounted(async () => {
   for (const track of tracks.value) {
     await initWaveSurfer(track)
   }
+  startScrollSync()
 })
 
 onBeforeUnmount(() => {
+  stopScrollSync()
   for (const track of tracks.value) {
     // 停止静音检测
     stopSilenceDetection(track)
@@ -1411,6 +1477,48 @@ button { cursor: pointer !important; }
 }
 
 .vp-volume-slider { width: 70px; }
+
+/* ── 隐藏 WaveSurfer 每路自带滚动条 ─────────────────────────────────── */
+:deep(.scroll) {
+  overflow: hidden !important;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+/* ── 统一滚动条 ──────────────────────────────────────────────────────── */
+.vp-unified-scroll {
+  padding: 4px 0 0;
+}
+
+.vp-unified-scrollbar {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--vp-border-color);
+  outline: none;
+  cursor: pointer;
+  display: block;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 40px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--vp-slider-color);
+    cursor: pointer;
+  }
+
+  &::-moz-range-thumb {
+    width: 40px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--vp-slider-color);
+    cursor: pointer;
+    border: none;
+  }
+}
 
 /* ── 设置弹窗 ────────────────────────────────────────────────────────────── */
 .vp-settings-overlay {
