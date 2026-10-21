@@ -211,15 +211,16 @@ const theme = ref('light')
 
 const DARK_THEME = {
   '--vp-bg': '#0f172a',
+  '--vp-control-bar-bg': '#1a2340',
   '--vp-border-color': '#312e81',
   '--vp-progress-color': '#a5b4fc',
   '--vp-cursor-color': '#c7d2fe',
   '--vp-region-color': 'rgba(165,180,252,0.2)',
-  '--vp-btn-color': '#a5b4fc',
+  '--vp-btn-color': '#7b9cef',
   '--vp-btn-hover-bg': '#1e1b4b',
   '--vp-label-color': '#e0e7ff',
   '--vp-time-color': '#94a3b8',
-  '--vp-slider-color': '#a5b4fc',
+  '--vp-slider-color': '#7b9cef',
   '--vp-bookmark-color': '#fbbf24',
   '--vp-progress-bar-color': '#a5b4fc',
 }
@@ -500,14 +501,21 @@ async function initWaveSurfer(track) {
   })
 
   // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例，同步所有轨道）────
+  let _zoomTimer = null
   waveContainer.addEventListener('wheel', (e) => {
     e.preventDefault()
     const delta = e.deltaY > 0 ? -5 : 5
     const newZoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
-    for (const t of tracks.value) {
-      t.state.zoom = newZoom
-      t.state.ws?.zoom(newZoom)
-    }
+    for (const t of tracks.value) t.state.zoom = newZoom
+    if (_zoomTimer) clearTimeout(_zoomTimer)
+    _zoomTimer = setTimeout(() => {
+      for (const t of tracks.value) t.state.ws?.zoom(t.state.zoom)
+      // zoom 完成后重新计算工具条位置（总宽度已变化）
+      for (const t of tracks.value) {
+        if (t.state.toolbar.region) updateToolbar(t, t.state.toolbar.region)
+      }
+      _zoomTimer = null
+    }, 150)
   }, { passive: false })
 
   waveContainer.addEventListener('dblclick', (e) => {
@@ -517,6 +525,12 @@ async function initWaveSurfer(track) {
         t.state.zoom = 1
         t.state.ws?.zoom(1)
       }
+      // 恢复原比例后也刷新工具条
+      setTimeout(() => {
+        for (const t of tracks.value) {
+          if (t.state.toolbar.region) updateToolbar(t, t.state.toolbar.region)
+        }
+      }, 50)
     }
   })
 
@@ -1053,10 +1067,13 @@ function toggleSkipSilence(track) {
 function updateToolbar(track, region) {
   const wrap = wrapRefs[track.id]
   if (!wrap) return
-  const W = wrap.getBoundingClientRect().width
   const dur = track.state.duration || 1
-  const startX = (region.start / dur) * W
-  const endX = (region.end / dur) * W
+  // 缩放时需用总滚动宽度和当前偏移量计算工具条的可见位置
+  const scrollEl = getWsScrollEl(track.id)
+  const totalWidth = scrollEl ? scrollEl.scrollWidth : wrap.getBoundingClientRect().width
+  const scrollLeft = scrollEl ? scrollEl.scrollLeft : 0
+  const startX = (region.start / dur) * totalWidth - scrollLeft
+  const endX = (region.end / dur) * totalWidth - scrollLeft
   track.state.toolbar = {
     visible: true,
     left: startX + (endX - startX) / 2,
@@ -1231,16 +1248,17 @@ button { cursor: pointer !important; }
 /* ── CSS 变量默认值 ────────────────────────────────────────────────────── */
 .voice-player {
   --vp-bg: #ffffff;
+  --vp-control-bar-bg: #f6f7ff;
   --vp-border-color: #e0e7ff;
   --vp-wave-color: #818cf8;
   --vp-progress-color: #6366f1;
   --vp-cursor-color: #4f46e5;
   --vp-region-color: rgba(99, 102, 241, 0.15);
-  --vp-btn-color: #6366f1;
+  --vp-btn-color: #4562bd;
   --vp-btn-hover-bg: #eef2ff;
   --vp-label-color: #374151;
   --vp-time-color: #6b7280;
-  --vp-slider-color: #6366f1;
+  --vp-slider-color: #4562bd;
   --vp-radius: 8px;
   --vp-bookmark-color: #f59e0b;
   --vp-error-color: #ef4444;
@@ -1248,10 +1266,10 @@ button { cursor: pointer !important; }
 
   background: var(--vp-bg);
   border-radius: var(--vp-radius);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  padding: 0;
   font-family: system-ui, sans-serif;
   height: 400px;
   overflow: hidden;
@@ -1264,6 +1282,7 @@ button { cursor: pointer !important; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
+  background: var(--vp-control-bar-bg);
 }
 
 .vp-playback-controls {
@@ -1300,6 +1319,7 @@ button { cursor: pointer !important; }
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  padding: 5px 10px;
 }
 
 .vp-track {
@@ -1307,7 +1327,6 @@ button { cursor: pointer !important; }
   border-radius: calc(var(--vp-radius) - 2px);
   display: flex;
   flex-direction: column;
-  gap: 8px;
   outline: none;
   flex: 1;
   min-height: 0;
