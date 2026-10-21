@@ -350,6 +350,8 @@ async function initWaveSurfer(track) {
       : (rootEl.value ? getComputedStyle(rootEl.value).getPropertyValue('--vp-cursor-color').trim() : '') || '#4f46e5'),
     height: opt.height ?? 'auto',
     interact: false,
+    autoCenter: true,
+    autoScroll: true,
     plugins,
   })
 
@@ -387,7 +389,7 @@ async function initWaveSurfer(track) {
   // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例，同步所有轨道）────
   waveContainer.addEventListener('wheel', (e) => {
     e.preventDefault()
-    const delta = e.deltaY > 0 ? -10 : 10
+    const delta = e.deltaY > 0 ? -5 : 5
     const newZoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
     for (const t of tracks.value) {
       t.state.zoom = newZoom
