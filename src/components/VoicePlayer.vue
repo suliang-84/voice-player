@@ -41,6 +41,9 @@
         <button class="vp-btn" @click="toggleTheme" title="切换主题">
           <SvgIcon name="theme" size="20px" />
         </button>
+        <button class="vp-btn" :class="{ 'vp-btn--active': chatVisible }" @click="chatVisible = !chatVisible" title="转写内容">
+          <SvgIcon name="chat" size="20px" />
+        </button>
         <button class="vp-btn" @click="openSettings" title="设置">
           <SvgIcon name="setting" size="20px" />
         </button>
@@ -92,7 +95,8 @@
       </div>
     </teleport>
 
-    <!-- 轨道列表 -->
+    <!-- 轨道列表 + 聊天面板 -->
+    <div class="vp-main-area">
     <div :class="props.trackB ? 'vp-tracks-dual' : null">
     <div
       v-for="track in tracks"
@@ -104,7 +108,11 @@
     >
       <!-- 头部：标签 + 控制栏 -->
       <div class="vp-track-header">
-        <span class="vp-label">{{ track.config.label || `${track.id}路` }}</span>
+        <span class="vp-label">
+          <SvgIcon name="doubble_triangle" size="12px" :class="['vp-track-icon', `vp-track-icon--${track.id}`]" />
+          {{ track.config.label || `${track.id}路` }}
+          <span v-if="track.config.identity" class="vp-identity">（疑似{{ track.config.identity }}）</span>
+        </span>
         <div class="vp-header-right">
           <span v-if="track.state.loadError" class="vp-error-text">
             ⚠ {{ track.state.loadError }}
@@ -168,6 +176,31 @@
     </div>
     </div><!-- end vp-tracks-dual wrapper -->
 
+    <!-- 聊天面板 -->
+    <transition name="vp-chat-slide">
+      <div v-if="chatVisible" class="vp-chat-panel"
+        ref="chatEl"
+        @mouseenter="chatHovered = true"
+        @mouseleave="chatHovered = false"
+      >
+        <div v-if="!props.transcripts.length" class="vp-chat-empty">暂无转写内容</div>
+        <template v-else>
+          <div
+            v-for="(item, idx) in props.transcripts"
+            :key="idx"
+            class="vp-chat-msg"
+            :class="[`vp-chat-msg--${item.trackId}`, { 'vp-chat-msg--active': idx === activeTranscriptIdx }]"
+            @dblclick="seekToTranscript(item)"
+          >
+            <SvgIcon :name="`admin_${item.trackId}`" size="24px" class="vp-chat-avatar" />
+            <div class="vp-chat-bubble">{{ item.text }}</div>
+          </div>
+        </template>
+      </div>
+    </transition>
+
+    </div><!-- end vp-main-area -->
+
     <!-- 统一滚动条（仅放大时显示） -->
     <div v-if="unifiedScrollMax > 0" class="vp-unified-scroll">
       <input
@@ -196,6 +229,7 @@ const props = defineProps({
   options: { type: Object, default: () => ({}) },
   hasPrev: { type: Boolean, default: false },
   hasNext: { type: Boolean, default: false },
+  transcripts: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
@@ -293,6 +327,11 @@ function applySettings() {
 // ── 根元素 ref ─────────────────────────────────────────────────────────────
 const rootEl = ref(null)
 
+// ── 聊天面板 ────────────────────────────────────────────────────────────────
+const chatVisible = ref(false)
+const chatHovered = ref(false)
+const chatEl = ref(null)
+
 // ── AB 进度同步（仅用户主动 seek 时触发，播放中不干预） ─────────────────────────
 // 区域边界处理中的持久化锁（异步事件期间全程有效）
 const _regionEndLock = { A: false, B: false }
@@ -326,6 +365,24 @@ function createTrackState(id) {
 
 const stateA = createTrackState('A')
 const stateB = createTrackState('B')
+
+// ── 聊天面板 computed（依赖 stateA，必须在 stateA 声明后定义）────────────────
+const activeTranscriptIdx = computed(() => {
+  if (!props.transcripts.length) return -1
+  const t = stateA.currentTime
+  let idx = -1
+  for (let i = 0; i < props.transcripts.length; i++) {
+    if (props.transcripts[i].startTime <= t) idx = i
+    else break
+  }
+  return idx
+})
+
+watch(activeTranscriptIdx, (idx) => {
+  if (chatHovered.value || idx < 0 || !chatEl.value) return
+  const el = chatEl.value.querySelectorAll('.vp-chat-msg')[idx]
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+})
 
 const tracks = computed(() => {
   const result = [{ id: 'A', config: props.trackA, state: stateA }]
@@ -1255,6 +1312,13 @@ function audioBufferToWav(buffer) {
   return out
 }
 
+// ── 转写内容双击定位 ────────────────────────────────────────────────────────
+function seekToTranscript(item) {
+  for (const track of tracks.value) {
+    track.state.ws?.setTime(item.startTime)
+  }
+}
+
 // ── 键盘快捷键 ──────────────────────────────────────────────────────────
 function handleKeydown(e, track) {
   if (!track.state.ws) return
@@ -1391,6 +1455,7 @@ button { cursor: pointer !important; }
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   padding: 5px 10px;
 }
@@ -1426,6 +1491,24 @@ button { cursor: pointer !important; }
   font-size: 13px;
   font-weight: 600;
   color: var(--vp-label-color);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  .vp-identity {
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--vp-time-color);
+    margin-left: 2px;
+  }
+}
+
+.vp-track-icon {
+  transform: rotate(90deg);
+  flex-shrink: 0;
+
+  &--A { color: #2c91e4; }
+  &--B { color: #0fab9d; }
 }
 
 .vp-header-right {
@@ -1617,6 +1700,134 @@ button { cursor: pointer !important; }
   overflow: hidden !important;
   scrollbar-width: none;
   &::-webkit-scrollbar { display: none; }
+}
+
+/* ── 主区域（波形 + 聊天并排） ───────────────────────────────────────── */
+.vp-main-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 聊天面板 ────────────────────────────────────────────────────────── */
+.vp-chat-panel {
+  width: 35%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-left: 1px solid var(--vp-border-color);
+  background: var(--vp-bg);
+  padding: 12px 8px;
+  gap: 10px;
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb { background: var(--vp-border-color); border-radius: 2px; }
+}
+
+.vp-chat-empty {
+  text-align: center;
+  color: var(--vp-time-color);
+  font-size: 13px;
+  margin-top: 20px;
+}
+
+.vp-chat-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+
+  // A路：左对齐（蓝色），头像在左
+  &--A {
+    justify-content: flex-start;
+    .vp-chat-avatar { order: 0; }
+    .vp-chat-bubble {
+      order: 1;
+      background: #d6eaf8;
+      color: #1a5276;
+      border-radius: 4px 4px 4px 4px;
+    }
+  }
+
+  // B路：右对齐（绿色），头像在右
+  &--B {
+    justify-content: flex-end;
+    .vp-chat-avatar { order: 1; }
+    .vp-chat-bubble {
+      order: 0;
+      background: #d5f5e3;
+      color: #1e8449;
+      border-radius: 4px 4px 4px 4px;
+    }
+  }
+
+  // 高亮当前播放条目：A路用蓝色，B路用绿色，文字白色
+  &--active.vp-chat-msg--A .vp-chat-bubble {
+    background: #2c91e4;
+    color: #ffffff;
+  }
+  &--active.vp-chat-msg--B .vp-chat-bubble {
+    background: #0fab9d;
+    color: #ffffff;
+  }
+}
+
+.vp-chat-avatar {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+.vp-chat-bubble {
+  position: relative;
+  max-width: 75%;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-all;
+  transition: outline 0.2s;
+}
+
+.vp-chat-msg--A .vp-chat-bubble::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: -6px;
+  border-width: 5px 6px 5px 0;
+  border-style: solid;
+  border-color: transparent #d6eaf8 transparent transparent;
+}
+.vp-chat-msg--active.vp-chat-msg--A .vp-chat-bubble::before {
+  border-color: transparent #2c91e4 transparent transparent;
+}
+
+.vp-chat-msg--B .vp-chat-bubble::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  right: -6px;
+  border-width: 5px 0 5px 6px;
+  border-style: solid;
+  border-color: transparent transparent transparent #d5f5e3;
+}
+.vp-chat-msg--active.vp-chat-msg--B .vp-chat-bubble::before {
+  border-color: transparent transparent transparent #0fab9d;
+}
+
+// 聊天面板滑入动画
+.vp-chat-slide-enter-active,
+.vp-chat-slide-leave-active {
+  transition: width 0.25s ease, opacity 0.25s ease;
+  overflow: hidden;
+}
+.vp-chat-slide-enter-from,
+.vp-chat-slide-leave-to {
+  width: 0 !important;
+  opacity: 0;
 }
 
 /* ── 统一滚动条 ──────────────────────────────────────────────────────── */
