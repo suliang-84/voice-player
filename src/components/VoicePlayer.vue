@@ -226,7 +226,7 @@ const DARK_THEME = {
   '--vp-border-color': '#312e81',
   '--vp-progress-color': '#a5b4fc',
   '--vp-cursor-color': '#c7d2fe',
-  '--vp-region-color': 'rgba(165,180,252,0.2)',
+  '--vp-region-color': 'rgba(123,156,239,0.2)',
   '--vp-btn-color': '#7b9cef',
   '--vp-btn-hover-bg': '#1e1b4b',
   '--vp-label-color': '#e0e7ff',
@@ -431,10 +431,10 @@ function stopScrollSync() {
 
 // ── 选区颜色（按轨道 ID） ──────────────────────────────────────────────
 function regionColor(trackId) {
-  if (props.trackB) return trackId === 'A' ? 'rgba(44,145,228,0.1)' : 'rgba(15,171,157,0.1)'
+  if (props.trackB) return trackId === 'A' ? 'rgba(44,145,228,0.2)' : 'rgba(15,171,157,0.2)'
   return rootEl.value
-    ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(99,102,241,0.15)'
-    : 'rgba(99,102,241,0.15)'
+    ? getComputedStyle(rootEl.value).getPropertyValue('--vp-region-color').trim() || 'rgba(69,98,189,0.2)'
+    : 'rgba(69,98,189,0.2)'
 }
 
 // ── WaveSurfer 初始化 ──────────────────────────────────────────────────
@@ -480,6 +480,7 @@ async function initWaveSurfer(track) {
     autoCenter: true,
     autoScroll: true,
     hideScrollbar: true,
+    cursorWidth: 2,
     plugins,
   })
 
@@ -1324,7 +1325,7 @@ button { cursor: pointer !important; }
   --vp-wave-color: #818cf8;
   --vp-progress-color: #6366f1;
   --vp-cursor-color: #4f46e5;
-  --vp-region-color: rgba(99, 102, 241, 0.15);
+  --vp-region-color: rgba(69, 98, 189, 0.2);
   --vp-btn-color: #4562bd;
   --vp-btn-hover-bg: #eef2ff;
   --vp-label-color: #374151;
