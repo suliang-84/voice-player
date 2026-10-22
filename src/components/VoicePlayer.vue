@@ -198,7 +198,17 @@ const props = defineProps({
   hasNext: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['prev', 'next'])
+const emit = defineEmits([
+  'prev', 'next',
+  // 波形
+  'ready', 'load-progress', 'load-error',
+  // 播放
+  'play', 'pause', 'finish', 'timeupdate',
+  // 交互
+  'seek', 'volume-change', 'speed-change', 'zoom-change',
+  // 选区
+  'region-created', 'region-cleared',
+])
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -264,6 +274,7 @@ function applySettings() {
     stateA.speed = draftSettings.speed
     stateA.ws?.setPlaybackRate(draftSettings.speed)
   }
+  emit('speed-change', { speed: draftSettings.speed })
   // 应用快进/后退秒数
   seekStep.value = draftSettings.seekStep || 5
   // 应用播放模式
@@ -495,6 +506,7 @@ async function initWaveSurfer(track) {
       : state.realDuration
     const newTime = progress * alignedDuration
     ws.seekTo(progress)
+    emit('seek', { trackId: track.id, currentTime: newTime })
     // 用户主动 seek 时精确同步对方轨道
     if (props.trackB) {
       const other = track.id === 'A' ? stateB : stateA
@@ -526,6 +538,7 @@ async function initWaveSurfer(track) {
       for (const t of tracks.value) {
         if (t.state.toolbar.region) updateToolbar(t, t.state.toolbar.region)
       }
+      emit('zoom-change', { zoom: newZoom })
       _zoomTimer = null
     }, 150)
   }, { passive: false })
@@ -563,7 +576,9 @@ async function loadAudio(track) {
   if (mediaEl) {
     mediaEl.addEventListener('progress', () => {
       if (mediaEl.duration && mediaEl.buffered.length) {
-        state.loadProgress = Math.round(mediaEl.buffered.end(mediaEl.buffered.length - 1) / mediaEl.duration * 100)
+        const progress = Math.round(mediaEl.buffered.end(mediaEl.buffered.length - 1) / mediaEl.duration * 100)
+        state.loadProgress = progress
+        emit('load-progress', { trackId: track.id, progress })
       }
     })
     mediaEl.addEventListener('canplay', () => {
@@ -573,6 +588,7 @@ async function loadAudio(track) {
     mediaEl.addEventListener('error', () => {
       state.isLoading = false
       state.loadError = '音频加载失败，请检查文件路径或网络'
+      emit('load-error', { trackId: track.id, message: state.loadError })
     })
   }
 
@@ -589,6 +605,7 @@ async function loadAudio(track) {
       state.isLoading = false
       state.loadProgress = 100
       state.loadError = null
+      emit('ready', { trackId: track.id, duration: state.realDuration })
 
       // 从 localStorage 恢复书签
       const storageKey = config.src || config.file?.name
@@ -612,7 +629,10 @@ async function loadAudio(track) {
         state.regions.getRegions().forEach(r => { if (r.id !== region.id) r.remove() })
         updateToolbar(track, region)
         ws.setTime(region.start)
-        if (!_syncingRegion) syncRegionToOther(track, region)
+        if (!_syncingRegion) {
+          syncRegionToOther(track, region)
+          emit('region-created', { trackId: track.id, start: region.start, end: region.end })
+        }
       })
       const unsubUpdated = state.regions.on('region-updated', (region) => {
         updateToolbar(track, region)
@@ -631,7 +651,10 @@ async function loadAudio(track) {
     alignDurations()
   })
 
-  ws.on('finish', () => { state.isPlaying = false })
+  ws.on('finish', () => {
+    state.isPlaying = false
+    emit('finish', { trackId: track.id })
+  })
 
   // currentTime 节流：每 250ms 才更新响应式状态，避免高频触发 Vue 重渲染
   let _lastTimeUpdate = 0
@@ -667,6 +690,7 @@ async function loadAudio(track) {
     if (now - _lastTimeUpdate >= 250) {
       _lastTimeUpdate = now
       state.currentTime = time
+      emit('timeupdate', { trackId: track.id, currentTime: time, duration: state.realDuration })
     }
   })
 
@@ -838,6 +862,7 @@ function setVolumeBoth(val) {
     if (!track.state.ws) continue
     track.state.volume = v
     track.state.isMuted = v === 0
+    emit('volume-change', { volume: v, muted: v === 0 })
     track.state.ws.setVolume(v)
   }
 }
@@ -849,6 +874,7 @@ function togglePlayBoth() {
       if (!track.state.ws || !track.state.isPlaying) continue
       track.state.ws.pause()
       track.state.isPlaying = false
+      emit('pause', { trackId: track.id, currentTime: track.state.currentTime })
     }
     return
   }
@@ -879,6 +905,7 @@ function togglePlayBoth() {
     track.state.ws.setTime(startTime)
     track.state.ws.play()
     track.state.isPlaying = true
+    emit('play', { trackId: track.id, currentTime: startTime })
   }
 }
 
@@ -941,6 +968,7 @@ function togglePlay(track) {
   if (track.state.isPlaying) {
     track.state.ws.pause()
     track.state.isPlaying = false
+    emit('pause', { trackId: track.id, currentTime: track.state.currentTime })
     return
   }
   const ended = track.state.ws.getMediaElement()?.ended ?? false
@@ -959,6 +987,7 @@ function togglePlay(track) {
   track.state.ws.setTime(startTime)
   track.state.ws.play()
   track.state.isPlaying = true
+  emit('play', { trackId: track.id, currentTime: startTime })
 }
 
 function setVolume(track, val) {
@@ -966,6 +995,7 @@ function setVolume(track, val) {
   track.state.volume = v
   track.state.isMuted = v === 0
   track.state.ws?.setVolume(v)
+  emit('volume-change', { volume: v, muted: v === 0 })
 }
 
 function toggleMute(track) {
@@ -1186,11 +1216,13 @@ async function downloadRegion(track) {
 function clearRegion(track) {
   track.state.regions.getRegions().forEach(r => r.remove())
   track.state.toolbar = { visible: false, left: 0, region: null }
+  emit('region-cleared', { trackId: track.id })
   // 双轨模式同步清除对方选区
   if (props.trackB) {
     const otherState = track.id === 'A' ? stateB : stateA
     otherState.regions?.getRegions().forEach(r => r.remove())
     otherState.toolbar = { visible: false, left: 0, region: null }
+    emit('region-cleared', { trackId: otherState.id })
   }
 }
 
