@@ -3,18 +3,33 @@
   <div class="app-container">
     <section>
       <VoicePlayer
-        :track-a="{ src: AUDIO_URL_A, label: 'A路' }"
-        :track-b="{ src: AUDIO_URL_B, label: 'B路' }"
+        :track-a="playlist[current].trackA"
+        :track-b="playlist[current].trackB"
+        :has-prev="current > 0"
+        :has-next="current < playlist.length - 1"
+        @prev="current--"
+        @next="current++"
       />
     </section>
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import VoicePlayer from './components/VoicePlayer.vue'
 
-const AUDIO_URL_A = '/demo-a.wav'
-const AUDIO_URL_B = '/demo-b.wav'
+const playlist = [
+  {
+    trackA: { src: '/demo-a.wav', label: 'A路' },
+    trackB: { src: '/demo-b.wav', label: 'B路' },
+  },
+  {
+    trackA: { src: '/demo-a.wav', label: 'A路' },
+    trackB: { src: '/demo-b.wav', label: 'B路' },
+  },
+]
+
+const current = ref(0)
 </script>
 
 <style lang="scss" scoped>

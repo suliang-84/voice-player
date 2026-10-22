@@ -5,19 +5,21 @@
     <div class="vp-control-bar">
       <!-- 左侧：主播放控制 -->
       <div class="vp-playback-controls">
-        <button class="vp-btn" @click="handlePrev" title="上一条">
+        <button class="vp-btn" @click="handlePrev" title="上一条"
+          :disabled="!hasPrev" :class="{ 'vp-btn--disabled': !hasPrev }">
           <SvgIcon name="previous" />
         </button>
-        <button class="vp-btn" @click="handleRewind" title="回退">
+        <button class="vp-btn" @click="handleRewind" :title="`回退 ${seekStep} 秒`">
           <SvgIcon name="rewind" />
         </button>
         <button class="vp-btn vp-play-btn" @click="handlePlayPause" :title="isPlayingAll ? '暂停' : '播放'">
           <SvgIcon :name="isPlayingAll ? 'pause' : 'play'" />
         </button>
-        <button class="vp-btn" @click="handleForward" title="快进">
+        <button class="vp-btn" @click="handleForward" :title="`快进 ${seekStep} 秒`">
           <SvgIcon name="forward" />
         </button>
-        <button class="vp-btn" @click="handleNext" title="下一条">
+        <button class="vp-btn" @click="handleNext" title="下一条"
+          :disabled="!hasNext" :class="{ 'vp-btn--disabled': !hasNext }">
           <SvgIcon name="next" />
         </button>
         <button class="vp-btn vp-volume-btn" @click="handleToggleMute" :title="isAllMuted ? '取消静音' : '静音'">
@@ -192,7 +194,11 @@ const props = defineProps({
   trackA: { type: Object, required: true },
   trackB: { type: Object, default: null },
   options: { type: Object, default: () => ({}) },
+  hasPrev: { type: Boolean, default: false },
+  hasNext: { type: Boolean, default: false },
 })
+
+const emit = defineEmits(['prev', 'next'])
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -754,22 +760,49 @@ function handleRewind() {
 }
 
 function handleForward() {
+  const maxDur = props.trackB
+    ? Math.max(stateA.realDuration, stateB.realDuration)
+    : stateA.realDuration
   for (const track of tracks.value) {
     if (!track.state.ws) continue
-    track.state.ws.setTime(Math.min(track.state.duration, track.state.currentTime + seekStep.value))
+    track.state.ws.setTime(Math.min(maxDur, track.state.currentTime + seekStep.value))
   }
 }
 
 function handlePrev() {
-  for (const track of tracks.value) {
-    track.state.ws?.setTime(0)
+  if (props.hasPrev) {
+    // 暂停当前播放
+    for (const track of tracks.value) {
+      if (track.state.isPlaying) {
+        track.state.ws?.pause()
+        track.state.isPlaying = false
+      }
+    }
+    emit('prev')
+  } else {
+    // 没有上一条则回到开头
+    for (const track of tracks.value) {
+      track.state.ws?.setTime(0)
+    }
   }
 }
 
 function handleNext() {
-  for (const track of tracks.value) {
-    if (!track.state.ws) continue
-    track.state.ws.setTime(track.state.duration)
+  if (props.hasNext) {
+    // 暂停当前播放
+    for (const track of tracks.value) {
+      if (track.state.isPlaying) {
+        track.state.ws?.pause()
+        track.state.isPlaying = false
+      }
+    }
+    emit('next')
+  } else {
+    // 没有下一条则跳到结尾
+    for (const track of tracks.value) {
+      if (!track.state.ws) continue
+      track.state.ws.setTime(track.state.duration)
+    }
   }
 }
 
@@ -1497,6 +1530,11 @@ button { cursor: pointer !important; }
   font-size: 15px;
   line-height: 1;
   transition: background 0.15s;
+
+  &--disabled {
+    opacity: 0.3;
+    cursor: not-allowed !important;
+  }
   white-space: nowrap;
 
   &--active { background: var(--vp-btn-hover-bg); border-color: var(--vp-btn-color); }
