@@ -41,7 +41,7 @@
         <button class="vp-btn" @click="toggleTheme" title="切换主题">
           <SvgIcon name="theme" size="20px" />
         </button>
-        <button class="vp-btn" :class="{ 'vp-btn--active': chatVisible }" @click="chatVisible = !chatVisible" title="转写内容">
+        <button class="vp-btn" @click="chatVisible = !chatVisible" title="转写内容">
           <SvgIcon name="chat" size="20px" />
         </button>
         <button class="vp-btn" @click="openSettings" title="设置">
