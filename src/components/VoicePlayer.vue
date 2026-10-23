@@ -1842,7 +1842,7 @@ button { cursor: pointer !important; }
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  background: var(--vp-border-color);
+  background: #f6f7ff;
   outline: none;
   cursor: pointer;
   display: block;
