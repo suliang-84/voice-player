@@ -174,6 +174,20 @@
       </div>
 
     </div>
+
+    <!-- 统一滚动条（仅放大时显示，限制在波形区域内） -->
+    <div v-if="unifiedScrollMax > 0" class="vp-unified-scroll">
+      <input
+        type="range"
+        min="0"
+        :max="unifiedScrollMax"
+        step="1"
+        :value="unifiedScrollLeft"
+        class="vp-unified-scrollbar"
+        @input="onUnifiedScroll($event.target.value)"
+      />
+    </div>
+
     </div><!-- end vp-tracks-dual wrapper -->
 
     <!-- 聊天面板 -->
@@ -200,19 +214,6 @@
     </transition>
 
     </div><!-- end vp-main-area -->
-
-    <!-- 统一滚动条（仅放大时显示） -->
-    <div v-if="unifiedScrollMax > 0" class="vp-unified-scroll">
-      <input
-        type="range"
-        min="0"
-        :max="unifiedScrollMax"
-        step="1"
-        :value="unifiedScrollLeft"
-        class="vp-unified-scrollbar"
-        @input="onUnifiedScroll($event.target.value)"
-      />
-    </div>
 
   </div>
 </template>
