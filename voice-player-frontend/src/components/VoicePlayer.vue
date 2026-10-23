@@ -35,11 +35,17 @@
       </div>
       <!-- 右侧：辅助控制 -->
       <div class="vp-aux-controls">
+        <button class="vp-btn" title="跳过空音">
+          <SvgIcon name="null" size="20px" />
+        </button>
         <button class="vp-btn" @click="handleDownload" title="下载">
           <SvgIcon name="download" size="20px" />
         </button>
         <button class="vp-btn" @click="toggleTheme" title="切换主题">
           <SvgIcon name="theme" size="20px" />
+        </button>
+        <button class="vp-btn" title="语音场景">
+          <SvgIcon name="scene" size="20px" />
         </button>
         <button class="vp-btn" @click="chatVisible = !chatVisible" title="转写内容">
           <SvgIcon name="chat" size="20px" />
@@ -207,7 +213,13 @@
             @dblclick="seekToTranscript(item)"
           >
             <SvgIcon :name="`admin_${item.trackId}`" size="24px" class="vp-chat-avatar" />
-            <div class="vp-chat-bubble">{{ item.text }}</div>
+            <div class="vp-chat-bubble" @contextmenu.stop="onBubbleContextMenu($event, item)">
+              <span class="vp-chat-text">{{ item.text }}</span>
+              <template v-if="item.translation">
+                <div class="vp-chat-divider"></div>
+                <span class="vp-chat-translation">{{ item.translation }}</span>
+              </template>
+            </div>
           </div>
         </template>
       </div>
@@ -216,6 +228,19 @@
     </div><!-- end vp-main-area -->
 
   </div>
+
+  <!-- 右键菜单 -->
+  <teleport to="body">
+    <div
+      v-if="ctxMenu.visible"
+      class="vp-ctx-menu"
+      :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
+      @click.stop
+    >
+      <button class="vp-ctx-menu-item" @click="editTranscript">编辑转写内容</button>
+      <button class="vp-ctx-menu-item" @click="editTranslation">编辑翻译内容</button>
+    </div>
+  </teleport>
 </template>
 
 <script setup>
@@ -332,6 +357,42 @@ const rootEl = ref(null)
 const chatVisible = ref(false)
 const chatHovered = ref(false)
 const chatEl = ref(null)
+
+// ── 右键菜单 ─────────────────────────────────────────────────────────────────
+const ctxMenu = reactive({ visible: false, x: 0, y: 0, item: null })
+
+function onBubbleContextMenu(e, item) {
+  e.preventDefault()
+  ctxMenu.visible = true
+  ctxMenu.x = e.clientX
+  ctxMenu.y = e.clientY
+  ctxMenu.item = item
+}
+
+function closeCtxMenu() {
+  ctxMenu.visible = false
+  ctxMenu.item = null
+}
+
+function editTranscript() {
+  closeCtxMenu()
+  // 编辑转写内容逻辑（待实现）
+}
+
+function editTranslation() {
+  closeCtxMenu()
+  // 编辑翻译内容逻辑（待实现）
+}
+
+onMounted(() => {
+  window.addEventListener('click', closeCtxMenu)
+  window.addEventListener('contextmenu', closeCtxMenu)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', closeCtxMenu)
+  window.removeEventListener('contextmenu', closeCtxMenu)
+})
 
 // ── AB 进度同步（仅用户主动 seek 时触发，播放中不干预） ─────────────────────────
 // 区域边界处理中的持久化锁（异步事件期间全程有效）
@@ -1790,7 +1851,27 @@ button { cursor: pointer !important; }
   font-size: 13px;
   line-height: 1.5;
   word-break: break-all;
-  transition: outline 0.2s;
+  transition: background 0.2s, color 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vp-chat-text {
+  display: block;
+}
+
+.vp-chat-divider {
+  height: 1px;
+  background: currentColor;
+  opacity: 0.2;
+}
+
+.vp-chat-translation {
+  display: block;
+  font-size: 12px;
+  opacity: 0.75;
+  font-style: italic;
 }
 
 .vp-chat-msg--A .vp-chat-bubble::before {
@@ -1863,6 +1944,37 @@ button { cursor: pointer !important; }
     background: var(--vp-slider-color);
     cursor: pointer;
     border: none;
+  }
+}
+
+/* ── 右键菜单 ────────────────────────────────────────────────────────────── */
+:global(.vp-ctx-menu) {
+  position: fixed;
+  z-index: 9999;
+  background: #ffffff;
+  border: 1px solid #e0e7ff;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px 0;
+  min-width: 140px;
+  user-select: none;
+}
+
+:global(.vp-ctx-menu-item) {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  line-height: 1.4;
+
+  &:hover {
+    background: #f0f4ff;
+    color: #4562bd;
   }
 }
 
