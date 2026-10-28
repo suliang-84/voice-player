@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     whisper_model: str = "small"
     whisper_device: str = "auto"
     whisper_compute_type: str = "default"
+    asr_load_timeout: float = 120  # 转写任务等待模型加载（首次使用需下载）的最长秒数
+    asr_retry_interval: float = 60  # 模型加载失败后，隔多久才允许在下次访问时重新加载（期间前端能稳定看到失败原因）
 
     # 大模型（OpenAI 兼容接口）：用于身份推断、场景分析、翻译；未配置则退回 unknown / 空
     llm_base_url: str = ""

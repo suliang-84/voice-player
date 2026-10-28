@@ -979,13 +979,14 @@ async function retryLoad(track) {
 // ── 生命周期 ────────────────────────────────────────────────────────────
 onMounted(async () => {
   await nextTick()
-  // 波形/静音数据先于 WaveSurfer 创建；转写、说话人、场景并行加载，设置不阻塞
+  // 波形/静音数据先于 WaveSurfer 创建；音频就绪后再加载转写、说话人、场景（与播放无关，不阻塞）
   loadSettings()
   await audioData.loadAll()
   for (const track of tracks.value) {
     await initWaveSurfer(track)
   }
   startScrollSync()
+  audioData.loadDetails()
 })
 
 onBeforeUnmount(() => {
@@ -1017,6 +1018,7 @@ watch(() => props.audioId, async () => {
   await nextTick()
   for (const track of tracks.value) await initWaveSurfer(track)
   startScrollSync()
+  audioData.loadDetails()
 })
 
 // trackB 动态变化时初始化

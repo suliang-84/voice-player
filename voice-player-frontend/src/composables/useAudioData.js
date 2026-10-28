@@ -86,11 +86,17 @@ export function useAudioData(getAudioId, { onPeaksGenerated } = {}) {
   // 渲染波形所需的数据：必须先于 WaveSurfer 创建
   const loadWaveData = () => Promise.all([loadPeaks(), loadSilences()])
 
+  // 重置并加载播放所需的数据（波形、静音）。转写类数据与播放无关，由 loadDetails 单独加载，
+  // 避免耗时的转写/译文请求与音频流抢占浏览器同一主机的并发连接
   function loadAll() {
     resetData()
+    return loadWaveData()
+  }
+
+  // 转写、译文、说话人、场景：在音频就绪后再加载，失败或缓慢都不影响播放
+  function loadDetails() {
     loadTexts()
     loadScenes()
-    return loadWaveData()
   }
 
   function resetData() {
@@ -177,7 +183,7 @@ export function useAudioData(getAudioId, { onPeaksGenerated } = {}) {
 
   return {
     state, transcripts, identities,
-    loadAll, loadWaveData, peaksOf, rejectPeaks,
+    loadAll, loadDetails, loadWaveData, peaksOf, rejectPeaks,
     editTranscript, editTranslation,
   }
 }

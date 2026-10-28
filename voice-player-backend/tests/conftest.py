@@ -66,9 +66,12 @@ def make_client(tmp_path):
     clients = []
 
     def _make(*, asr="fake", llm=None, **overrides):
+        """asr: "fake" 内置假引擎 | None 无引擎 | 任意 provider 对象。"""
+        if asr is None:
+            overrides.setdefault("asr_provider", "none")  # 不能让测试去构建真实引擎（会下载模型）
         settings = Settings(data_dir=tmp_path / "data", **overrides)
-        app = create_app(settings, asr=FakeAsr() if asr == "fake" else None,
-                         asr_error="未安装转写引擎" if asr != "fake" else "", llm=llm)
+        provider = FakeAsr() if asr == "fake" else asr
+        app = create_app(settings, asr=provider, llm=llm)
         c = TestClient(app)
         c.__enter__()
         clients.append(c)

@@ -25,6 +25,8 @@ cp .env.example .env
 | `GET /health` | 引擎状态 |
 
 音频存放在 `DATA_DIR/audios/{audioId}.<ext>`，`audioId` 即文件名；也可以直接把文件放进该目录。
+**后端里没有对应音频时，`/stream`、`peaks` 等都返回 `40001`，播放器会显示“音频加载失败”。**
+前端演示页用的是 `audio_001` / `audio_002`，首次联调先执行 `.venv/bin/python scripts/seed_demo.py` 生成。
 **A 轨 = 左声道，B 轨 = 右声道**，单声道文件只有 A 轨。非 WAV 格式（mp3/m4a 等）依赖 ffmpeg 转码。
 
 ## 能力与降级
@@ -32,13 +34,19 @@ cp .env.example .env
 | 能力 | 实现 | 未配置时 |
 |---|---|---|
 | peaks / silences / stream | soundfile 分块流式处理，peaks 与声道文件落盘缓存 | — |
-| 转写 | 每个声道独立转写（声道即说话人），faster-whisper，后台任务，进度经 WebSocket 推送；未完成时 `40002` | `status: "failed"` + `error` 说明原因 |
+| 转写 | 每个声道独立转写（声道即说话人），faster-whisper，后台任务，进度经 WebSocket 推送；未完成时 `40002`。模型在服务启动时后台预加载（首次使用需联网下载），`/health` 的 `asrState` 反映 `loading/ready/failed/unavailable` | `status: "failed"` + `error` 说明原因 |
 | 疑似身份 / 场景 / 翻译 | 大模型根据转写内容推断，身份为自由描述（如“某公司老板”），线索不足为 `unknown`；默认语种在转写后预翻译，其它语种按需翻译 | 身份 `unknown`、`scenes: []`、译文为空 |
 | 转写/翻译编辑、用户设置 | 落库；设置按用户保存，PUT 为合并语义并校验取值 | — |
 | WebSocket `/ws?token=` | `peaks_generated`、`transcription_progress`、`transcription_completed` | — |
 | 鉴权 | `AUTH_ENABLED=true` 时校验 HS256 JWT；`/auth/refresh` 支持 `refreshToken` 或（可已过期的）访问令牌 | 关闭，所有请求视为同一匿名用户 |
 
 大模型调用失败不影响转写结果，仅该部分退回默认值。
+
+### 模型加载慢或失败
+
+任务最多等待 `ASR_LOAD_TIMEOUT` 秒（默认 120），模型仍未就绪就置为 `failed`，`error` 说明原因（如“转写模型仍在加载”“转写模型加载失败：…”），不会一直停在 0%。
+模型就绪后，下次访问该音频会自动重试；加载失败时需隔 `ASR_RETRY_INTERVAL` 秒（默认 60）才重新尝试加载，期间前端稳定显示失败原因。
+离线环境可把 `WHISPER_MODEL` 设为本地的 faster-whisper 模型目录。
 
 ## 已知限制
 

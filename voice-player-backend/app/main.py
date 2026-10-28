@@ -40,6 +40,8 @@ def create_app(settings: Settings | None = None, *, asr: AsrProvider | None = No
         app.state.storage, app.state.pipeline = storage, pipeline
         if provider is None:
             log.warning("转写引擎不可用：%s", err)
+        if hasattr(provider, "start_preload"):
+            provider.start_preload()  # 后台加载模型，不阻塞启动
         pipeline.resume_unfinished()
         yield
         pipeline.shutdown()
@@ -55,7 +57,10 @@ def create_app(settings: Settings | None = None, *, asr: AsrProvider | None = No
     @app.get("/health")
     def health():
         p = app.state.pipeline
-        return ok({"status": "ok", "asr": p.asr is not None, "llm": p.llm is not None})
+        state = p.engine_state()
+        return ok({"status": "ok" if state == "ready" else "degraded", "asr": state == "ready",
+                   "asrState": state, "asrError": getattr(p.asr, "error", "") or p.asr_error,
+                   "llm": p.llm is not None})
 
     return app
 

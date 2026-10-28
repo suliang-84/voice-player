@@ -1,5 +1,6 @@
 """音频后台流水线：峰值预计算 → 逐声道转写 → 大模型分析/默认语种翻译。"""
 import logging
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -10,12 +11,15 @@ from ..config import Settings
 from ..db import Database
 from ..models import Analysis, Task, Transcript, Translation
 from . import audio
-from .asr import AsrProvider
+from .asr import AsrProvider, AsrUnavailable
 from .hub import Hub
 from .llm import LlmClient, LlmError, default_scenes, unknown_speakers
 from .storage import Storage
 
 log = logging.getLogger("voice_player")
+
+# 因转写引擎不可用而失败的任务带此前缀；引擎恢复后下次访问会自动重试
+ENGINE_ERR = "转写引擎不可用："
 
 
 def new_id(prefix: str) -> str:
@@ -33,20 +37,39 @@ class Pipeline:
         self.asr, self.asr_error, self.llm = asr, asr_error, llm
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pipeline")
         self._inflight: set[str] = set()
+        self._engine_failed_at = 0.0
 
     # ── 入口 ──────────────────────────────────────────────────────────────
     def on_uploaded(self, audio_id: str) -> None:
         self._pool.submit(self._precompute_peaks, audio_id)
         self.ensure_transcription(audio_id)
 
+    def engine_state(self) -> str:
+        """ready | loading | failed | unavailable（未安装或未配置，需重启）。"""
+        if self.asr is None:
+            return "unavailable"
+        return getattr(self.asr, "state", "ready")
+
+    def _engine_retry_due(self) -> bool:
+        state = self.engine_state()
+        if state == "ready":
+            return True
+        # 加载失败：冷却期内保持失败，避免每次访问都重试导致前端永远看不到失败
+        return state == "failed" and time.monotonic() - self._engine_failed_at >= self.settings.asr_retry_interval
+
     def ensure_transcription(self, audio_id: str) -> Task:
-        """首次访问时创建并启动转写任务；已有任务（含已失败）直接返回。"""
+        """首次访问时创建并启动转写任务；因引擎不可用而失败的任务，在引擎恢复后重试。"""
         with self.db.session() as s:
             task = s.get(Task, audio_id)
             if task:
-                return task
-            task = Task(audio_id=audio_id, task_id=new_id("task_transcribe"), status="processing", progress=0)
-            s.add(task)
+                if not (task.status == "failed" and task.error.startswith(ENGINE_ERR) and self._engine_retry_due()):
+                    return task
+                if self.engine_state() == "failed":
+                    self.asr.start_preload()  # 重新尝试加载模型
+                task.status, task.progress, task.error = "processing", 0, ""
+            else:
+                task = Task(audio_id=audio_id, task_id=new_id("task_transcribe"), status="processing", progress=0)
+                s.add(task)
             s.commit()
         self._submit(audio_id)
         return task
@@ -111,7 +134,14 @@ class Pipeline:
 
     def _run(self, audio_id: str) -> None:
         if self.asr is None:
-            return self._fail(audio_id, self.asr_error or "未配置转写引擎")
+            return self._fail(audio_id, ENGINE_ERR + (self.asr_error or "未配置转写引擎"))
+        wait_ready = getattr(self.asr, "wait_ready", None)
+        if wait_ready:
+            try:
+                wait_ready(self.settings.asr_load_timeout)
+            except AsrUnavailable as e:
+                self._engine_failed_at = time.monotonic()
+                return self._fail(audio_id, ENGINE_ERR + str(e))
         tracks = self.storage.track_ids(audio_id)
         src = self.storage.source_wav(audio_id)
 

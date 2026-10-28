@@ -1,7 +1,10 @@
 import re
 import shutil
 import subprocess
+import threading
+import uuid
 from pathlib import Path
+from typing import Callable
 
 import soundfile as sf
 
@@ -24,6 +27,8 @@ class Storage:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
 
     # ── 原始文件 ──────────────────────────────────────────────────────────
     def find(self, audio_id: str) -> Path | None:
@@ -51,6 +56,27 @@ class Storage:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def build_cached(self, cache: Path, src: Path, build: Callable[[Path], None]) -> Path:
+        """生成派生文件（声道 WAV、转码结果、峰值）。同一目标文件同一时刻只生成一次：
+        播放器的 /stream 与后台转写会同时请求同一个文件，各自写固定临时名会互相覆盖。
+        其余线程等锁后直接复用；build 写入唯一的临时路径，完成后原子替换。"""
+        if _fresh(cache, src):
+            return cache
+        with self._lock_for(cache):
+            if _fresh(cache, src):  # 等锁期间已被别的线程生成
+                return cache
+            tmp = cache.with_name(f"{cache.stem}.{uuid.uuid4().hex[:8]}.tmp{cache.suffix}")
+            try:
+                build(tmp)
+                tmp.replace(cache)
+            finally:
+                tmp.unlink(missing_ok=True)
+        return cache
+
+    def _lock_for(self, path: Path) -> threading.Lock:
+        with self._locks_guard:
+            return self._locks.setdefault(str(path), threading.Lock())
+
     def remove(self, audio_id: str) -> None:
         p = self.find(audio_id)
         if p:
@@ -63,26 +89,20 @@ class Storage:
         src = self.require(audio_id)
         if _readable(src):
             return src
-        out = self.cache_dir(audio_id) / "source.wav"
-        if not _fresh(out, src):
-            self._transcode(src, out)
-        return out
+        return self.build_cached(self.cache_dir(audio_id) / "source.wav", src,
+                                 lambda tmp: self._transcode(src, tmp))
 
     def _transcode(self, src: Path, out: Path) -> None:
-        tmp = out.with_suffix(".tmp.wav")
         cmd = [self.settings.ffmpeg_bin, "-nostdin", "-y", "-v", "error", "-i", str(src),
-               "-vn", "-acodec", "pcm_s16le", str(tmp)]
+               "-vn", "-acodec", "pcm_s16le", str(out)]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=self.settings.ffmpeg_timeout)
         except FileNotFoundError:
             raise AppError(50001, "该格式需要 ffmpeg 转码，但未找到 ffmpeg")
         except subprocess.TimeoutExpired:
-            tmp.unlink(missing_ok=True)
             raise AppError(50002, "音频转码超时")
-        if r.returncode != 0 or not tmp.exists():
-            tmp.unlink(missing_ok=True)
+        if r.returncode != 0 or not out.exists():
             raise AppError(50002, f"音频转码失败：{r.stderr.strip()[-200:]}")
-        tmp.replace(out)
 
     # ── 单声道 WAV（按轨道） ──────────────────────────────────────────────
     def channels(self, audio_id: str) -> int:
@@ -97,10 +117,8 @@ class Storage:
         ids = list(TRACKS[: min(2, sf.info(src).channels)])
         if track not in ids:
             raise AppError(400, f"该音频没有 {track} 轨（单声道音频只有 A 轨）")
-        out = self.cache_dir(audio_id) / f"track_{track}.wav"
-        if not _fresh(out, src):
-            audio.extract_channel(src, TRACKS.index(track), out)
-        return out
+        return self.build_cached(self.cache_dir(audio_id) / f"track_{track}.wav", src,
+                                 lambda tmp: audio.extract_channel(src, TRACKS.index(track), tmp))
 
 
 def _readable(path: Path) -> bool:

@@ -82,13 +82,11 @@ def _runs(silent: np.ndarray, frame_sec: float, duration: float, min_duration: f
 
 
 def extract_channel(src: Path, channel: int, out: Path) -> None:
-    """把指定声道写成单声道 PCM16 WAV。"""
-    tmp = out.with_suffix(".tmp.wav")
-    with sf.SoundFile(src) as f, sf.SoundFile(tmp, "w", samplerate=f.samplerate, channels=1,
+    """把指定声道写成单声道 PCM16 WAV（out 由调用方保证唯一，见 Storage.build_cached）。"""
+    with sf.SoundFile(src) as f, sf.SoundFile(out, "w", samplerate=f.samplerate, channels=1,
                                               format="WAV", subtype="PCM_16") as w:
         while True:
             data = f.read(BLOCK_FRAMES, dtype="float32", always_2d=True)
             if len(data) == 0:
                 break
             w.write(data[:, channel])
-    tmp.replace(out)
