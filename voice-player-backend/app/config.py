@@ -1,0 +1,72 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    host: str = "0.0.0.0"
+    port: int = 10090
+    cors_origins: str = "*"  # 逗号分隔；播放器作为公共组件可能跨域访问
+
+    # 存储
+    data_dir: Path = Path("data")
+    database_url: str = ""  # 为空时使用 data_dir/voice_player.db（SQLite）
+    max_upload_bytes: int = 500 * 1024 * 1024
+
+    # 波形 / 静音默认值
+    default_peaks_points: int = 8000
+    default_silence_threshold: float = 0.001
+    default_silence_min_duration: float = 0.2
+    silence_frame_ms: int = 10
+
+    # 外部工具
+    ffmpeg_bin: str = "ffmpeg"
+    ffmpeg_timeout: int = 600
+
+    # 鉴权：token 由业务系统签发，这里只校验（HS256）
+    auth_enabled: bool = False
+    jwt_secret: str = "change-me"
+    access_token_ttl: int = 3600
+    refresh_token_ttl: int = 7 * 24 * 3600
+
+    # 转写：faster-whisper（需安装 requirements-asr.txt）；none 表示不启用
+    asr_provider: str = "faster-whisper"
+    whisper_model: str = "small"
+    whisper_device: str = "auto"
+    whisper_compute_type: str = "default"
+
+    # 大模型（OpenAI 兼容接口）：用于身份推断、场景分析、翻译；未配置则退回 unknown / 空
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_timeout: int = 120
+    llm_max_chars: int = 12000
+    default_translation_language: str = "en"
+
+    @property
+    def audio_dir(self) -> Path:
+        return self.data_dir / "audios"
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.data_dir / "cache"
+
+    @property
+    def db_url(self) -> str:
+        return self.database_url or f"sqlite:///{(self.data_dir / 'voice_player.db').resolve()}"
+
+    @property
+    def llm_enabled(self) -> bool:
+        return bool(self.llm_base_url and self.llm_model)
+
+    def ensure_dirs(self) -> None:
+        for d in (self.data_dir, self.audio_dir, self.cache_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

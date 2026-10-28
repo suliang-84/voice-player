@@ -394,3 +394,27 @@ props: {
 | Firefox | 75+ | |
 | Safari | 14+ | |
 | Edge | 80+ | |
+
+---
+
+## 对接后端
+
+播放器是公共组件：播放列表由业务系统获取，通过 props 传入 `audioId`、`trackA`、`trackB`，播放器不关心列表来源。接口约定见 `docs/接口设计说明书.md`。
+
+| 项 | 说明 |
+|----|------|
+| 音频源 | `trackA` / `trackB` 未提供 `src` 或 `file` 时，默认使用 `GET {VITE_API_BASE}/audios/{audioId}/stream?track=A\|B`（单声道 WAV，需支持 Range）；传入 `src` / `file` 则以传入为准 |
+| 环境变量 | `VITE_API_BASE`（默认 `/api/v1`）、`VITE_WS_URL`（为空则不连 WebSocket，转写中改为轮询）、`VITE_PROXY_TARGET`（开发代理目标，默认 `http://localhost:10090`） |
+| 超时 | peaks / silences / transcripts / speakers / scenes 为 120s，其余 30s |
+| 鉴权 | `src/api/auth.js` 的 `configureAuth` 注入 token；`<audio>` 无法带 `Authorization` 头，后端启用鉴权后需另行约定（query token 或 cookie） |
+
+### 本地联调
+
+先启动 `voice-player-backend`（端口 10090，见其 README），或在后端未就绪时用 mock 服务（按接口文档返回数据，监听 10090）：
+
+```bash
+node scripts/mock-server.js   # 终端 1
+npm run dev                   # 终端 2
+```
+
+后端当前限制：设置 / 翻译 / 编辑为演示数据，不落库；`/ws` 为占位，不推送事件；`confidence` 等字段可能为 `null`。

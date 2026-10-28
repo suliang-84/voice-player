@@ -1,0 +1,2 @@
+# 可选：本地转写引擎（ASR_PROVIDER=faster-whisper）
+faster-whisper>=1.0

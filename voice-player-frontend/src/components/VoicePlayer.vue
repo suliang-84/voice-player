@@ -35,7 +35,8 @@
       </div>
       <!-- 右侧：辅助控制 -->
       <div class="vp-aux-controls">
-        <button class="vp-btn" title="跳过空音">
+        <button class="vp-btn" :class="{ 'vp-btn--active': skipSilence }" @click="toggleSkipSilence"
+          :title="skipSilence ? '跳过空音：已开启' : '跳过空音：已关闭'">
           <SvgIcon name="null" size="20px" />
         </button>
         <button class="vp-btn" @click="handleDownload" title="下载">
@@ -44,10 +45,10 @@
         <button class="vp-btn" @click="toggleTheme" title="切换主题">
           <SvgIcon name="theme" size="20px" />
         </button>
-        <button class="vp-btn" title="语音场景">
+        <button class="vp-btn" @click="sceneVisible = true" title="语音场景">
           <SvgIcon name="scene" size="20px" />
         </button>
-        <button class="vp-btn" @click="chatVisible = !chatVisible" title="转写内容">
+        <button class="vp-btn" @click="toggleChat" title="转写内容">
           <SvgIcon name="chat" size="20px" />
         </button>
         <button class="vp-btn" @click="openSettings" title="设置">
@@ -117,7 +118,7 @@
         <span class="vp-label">
           <SvgIcon name="doubble_triangle" size="12px" :class="['vp-track-icon', `vp-track-icon--${track.id}`]" />
           {{ track.config.label || `${track.id}路` }}
-          <span v-if="track.config.identity" class="vp-identity">（疑似{{ track.config.identity }}）</span>
+          <span v-if="speakerIdentity(track.id)" class="vp-identity">（疑似{{ speakerIdentity(track.id) }}）</span>
         </span>
         <div class="vp-header-right">
           <span v-if="track.state.loadError" class="vp-error-text">
@@ -158,22 +159,6 @@
           <button @click="clearRegion(track)" title="清除选区">✕</button>
         </div>
 
-        <!-- 书签层 -->
-        <div class="vp-bookmarks-layer">
-          <div
-            v-for="bm in track.state.bookmarks"
-            :key="bm.id"
-            class="vp-bookmark"
-            :style="{ left: (bm.time / track.state.duration * 100) + '%' }"
-            :title="bm.label"
-            @click="track.state.ws?.setTime(bm.time)"
-            @dblclick.stop="removeBookmark(track, bm.id)"
-          >
-            <div class="vp-bookmark-line"></div>
-            <div class="vp-bookmark-label">{{ bm.label }}</div>
-          </div>
-        </div>
-
         <!-- 上半波形（WaveSurfer 渲染） -->
         <div :ref="el => setWaveRef(el, track.id)" class="vp-waveform-top"></div>
 
@@ -203,11 +188,17 @@
         @mouseenter="chatHovered = true"
         @mouseleave="chatHovered = false"
       >
-        <div v-if="!props.transcripts.length" class="vp-chat-empty">暂无转写内容</div>
+        <div v-if="transcriptState.transcriptStatus === 'processing'" class="vp-chat-empty">
+          转写中 {{ transcriptState.transcriptProgress }}%
+        </div>
+        <div v-else-if="transcriptState.transcriptStatus === 'failed'" class="vp-chat-empty">
+          转写失败{{ transcriptState.errors.transcripts ? `：${transcriptState.errors.transcripts}` : '' }}
+        </div>
+        <div v-else-if="!chatItems.length" class="vp-chat-empty">暂无转写内容</div>
         <template v-else>
           <div
-            v-for="(item, idx) in props.transcripts"
-            :key="idx"
+            v-for="(item, idx) in chatItems"
+            :key="item.id"
             class="vp-chat-msg"
             :class="[`vp-chat-msg--${item.trackId}`, { 'vp-chat-msg--active': idx === activeTranscriptIdx }]"
             @dblclick="seekToTranscript(item)"
@@ -241,21 +232,69 @@
       <button class="vp-ctx-menu-item" @click="editTranslation">编辑翻译内容</button>
     </div>
   </teleport>
+
+  <!-- 编辑转写 / 翻译 -->
+  <el-dialog
+    v-model="editDialog.visible"
+    :title="editDialog.kind === 'transcript' ? '编辑转写内容' : '编辑翻译内容'"
+    width="480px"
+    append-to-body
+  >
+    <el-input v-model="editDialog.text" type="textarea" :rows="5" />
+    <template #footer>
+      <el-button @click="editDialog.visible = false">取消</el-button>
+      <el-button type="primary" :loading="editDialog.saving" @click="submitEdit">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 语音场景 -->
+  <el-dialog v-model="sceneVisible" title="语音场景" width="520px" append-to-body>
+    <div v-if="transcriptState.errors.scenes" class="vp-scene-empty">{{ transcriptState.errors.scenes }}</div>
+    <div v-else-if="!transcriptState.scenes" class="vp-scene-empty">暂无场景数据</div>
+    <template v-else>
+      <div v-for="(sc, i) in transcriptState.scenes.scenes" :key="i" class="vp-scene-item">
+        <div class="vp-scene-title">
+          {{ sc.description || sc.type }}
+          <span v-if="sc.confidence != null" class="vp-scene-conf">{{ Math.round(sc.confidence * 100) }}%</span>
+        </div>
+        <div v-if="sc.type || sc.subType" class="vp-scene-sub">{{ [sc.type, sc.subType].filter(Boolean).join(' / ') }}</div>
+        <div v-if="sc.keywords?.length" class="vp-scene-tags">
+          <el-tag v-for="k in sc.keywords" :key="k" size="small">{{ k }}</el-tag>
+        </div>
+      </div>
+      <el-descriptions :column="1" size="small" border class="vp-scene-desc">
+        <el-descriptions-item v-if="known(transcriptState.scenes.callType)" label="通话方向">{{ transcriptState.scenes.callType }}</el-descriptions-item>
+        <el-descriptions-item v-if="known(transcriptState.scenes.callPurpose)" label="通话目的">{{ transcriptState.scenes.callPurpose }}</el-descriptions-item>
+        <el-descriptions-item v-if="known(transcriptState.scenes.callResolution)" label="通话结果">{{ transcriptState.scenes.callResolution }}</el-descriptions-item>
+        <template v-if="transcriptState.scenes.analysis">
+          <el-descriptions-item label="投诉倾向">
+            {{ transcriptState.scenes.analysis.hasComplaint ? '是' : '否' }}（{{ transcriptState.scenes.analysis.complaintScore }}）
+          </el-descriptions-item>
+          <el-descriptions-item label="表扬">{{ transcriptState.scenes.analysis.hasPraise ? '是' : '否' }}</el-descriptions-item>
+          <el-descriptions-item label="已升级">{{ transcriptState.scenes.analysis.isEscalated ? '是' : '否' }}</el-descriptions-item>
+        </template>
+      </el-descriptions>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
+import { ElMessage } from 'element-plus'
+import { getUserSettings, updateUserSettings, streamUrl } from '../api'
+import { useAudioData } from '../composables/useAudioData'
 
 // ── Props ──────────────────────────────────────────────────────────────────
 const props = defineProps({
-  trackA: { type: Object, required: true },
+  audioId: { type: String, required: true },
+  // 轨道配置：src / file / label。未提供 src 与 file 时，按 audioId 使用后端音频流接口
+  trackA: { type: Object, default: () => ({}) },
   trackB: { type: Object, default: null },
   options: { type: Object, default: () => ({}) },
   hasPrev: { type: Boolean, default: false },
   hasNext: { type: Boolean, default: false },
-  transcripts: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
@@ -270,8 +309,17 @@ const emit = defineEmits([
   'region-created', 'region-cleared',
 ])
 
+// ── 后端数据 ───────────────────────────────────────────────────────────────
+const audioData = useAudioData(() => props.audioId, {
+  // 首次没有 peaks（后端仍在生成）时，波形生成完成后重新初始化
+  onPeaksGenerated: () => { for (const track of tracks.value) retryLoad(track) },
+})
+const chatItems = audioData.transcripts
+const transcriptState = audioData.state
+
+const speakerIdentity = (trackId) => audioData.identities.value[trackId]
+
 // ── 常量 ───────────────────────────────────────────────────────────────────
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 
 // ── 设置弹窗 ────────────────────────────────────────────────────────────────
@@ -279,6 +327,7 @@ const settingsVisible = ref(false)
 const seekStep = ref(5)
 const playMode = ref('single')
 const theme = ref('light')
+const skipSilence = ref(false)
 
 const DARK_THEME = {
   '--vp-bg': '#0f172a',
@@ -292,7 +341,6 @@ const DARK_THEME = {
   '--vp-label-color': '#e0e7ff',
   '--vp-time-color': '#94a3b8',
   '--vp-slider-color': '#7b9cef',
-  '--vp-bookmark-color': '#fbbf24',
   '--vp-progress-bar-color': '#a5b4fc',
 }
 
@@ -303,15 +351,72 @@ const draftSettings = reactive({
   theme: 'light',
 })
 
-function toggleTheme() {
-  const newTheme = theme.value === 'light' ? 'dark' : 'light'
-  theme.value = newTheme
-  draftSettings.theme = newTheme
-  if (rootEl.value) {
-    const vars = newTheme === 'dark' ? DARK_THEME : {}
-    Object.keys(DARK_THEME).forEach(k => rootEl.value.style.removeProperty(k))
-    Object.entries(vars).forEach(([k, v]) => rootEl.value.style.setProperty(k, v))
+function applyTheme(name) {
+  theme.value = name
+  draftSettings.theme = name
+  if (!rootEl.value) return
+  const vars = name === 'dark' ? DARK_THEME : {}
+  Object.keys(DARK_THEME).forEach(k => rootEl.value.style.removeProperty(k))
+  Object.entries(vars).forEach(([k, v]) => rootEl.value.style.setProperty(k, v))
+}
+
+function applySpeed(speed) {
+  if (props.trackB) abSpeed.value = speed
+  for (const track of tracks.value) {
+    track.state.speed = speed
+    track.state.ws?.setPlaybackRate(speed)
   }
+}
+
+// ── 用户设置：服务端读取 / 保存 ────────────────────────────────────────────
+// 修改后合并到 pending，防抖 300ms 后以部分更新（merge）提交
+let _saveTimer = null
+let _pending = {}
+
+function saveSettings(patch) {
+  for (const key of ['playback', 'ui']) {
+    if (patch[key]) _pending[key] = { ..._pending[key], ...patch[key] }
+  }
+  clearTimeout(_saveTimer)
+  _saveTimer = setTimeout(async () => {
+    const body = _pending
+    _pending = {}
+    try {
+      await updateUserSettings(body)
+    } catch (e) {
+      ElMessage.error(`设置保存失败：${e.message}`)
+    }
+  }, 300)
+}
+
+async function loadSettings() {
+  try {
+    const { playback = {}, ui = {} } = await getUserSettings()
+    if (playback.defaultSpeed) applySpeed(playback.defaultSpeed)
+    if (playback.seekStep) seekStep.value = playback.seekStep
+    if (playback.playMode) playMode.value = playback.playMode
+    if (playback.skipSilence != null) skipSilence.value = playback.skipSilence
+    if (ui.theme) applyTheme(ui.theme)
+    if (ui.chatPanelVisible != null) chatVisible.value = ui.chatPanelVisible
+  } catch (e) {
+    ElMessage.warning(`用户设置加载失败，已使用默认值：${e.message}`)
+  }
+}
+
+function toggleTheme() {
+  const name = theme.value === 'light' ? 'dark' : 'light'
+  applyTheme(name)
+  saveSettings({ ui: { theme: name } })
+}
+
+function toggleChat() {
+  chatVisible.value = !chatVisible.value
+  saveSettings({ ui: { chatPanelVisible: chatVisible.value } })
+}
+
+function toggleSkipSilence() {
+  skipSilence.value = !skipSilence.value
+  saveSettings({ playback: { skipSilence: skipSilence.value } })
 }
 
 function openSettings() {
@@ -323,31 +428,16 @@ function openSettings() {
 }
 
 function applySettings() {
-  // 应用播放倍数
-  if (props.trackB) {
-    abSpeed.value = draftSettings.speed
-    for (const track of tracks.value) {
-      track.state.speed = draftSettings.speed
-      track.state.ws?.setPlaybackRate(draftSettings.speed)
-    }
-  } else {
-    stateA.speed = draftSettings.speed
-    stateA.ws?.setPlaybackRate(draftSettings.speed)
-  }
+  applySpeed(draftSettings.speed)
   emit('speed-change', { speed: draftSettings.speed })
-  // 应用快进/后退秒数
   seekStep.value = draftSettings.seekStep || 5
-  // 应用播放模式
   playMode.value = draftSettings.playMode
-  // 应用主题
-  theme.value = draftSettings.theme
-  if (rootEl.value) {
-    const vars = draftSettings.theme === 'dark' ? DARK_THEME : {}
-    // 清除旧变量
-    Object.keys(DARK_THEME).forEach(k => rootEl.value.style.removeProperty(k))
-    Object.entries(vars).forEach(([k, v]) => rootEl.value.style.setProperty(k, v))
-  }
+  applyTheme(draftSettings.theme)
   settingsVisible.value = false
+  saveSettings({
+    playback: { defaultSpeed: draftSettings.speed, seekStep: seekStep.value, playMode: playMode.value },
+    ui: { theme: draftSettings.theme },
+  })
 }
 
 // ── 根元素 ref ─────────────────────────────────────────────────────────────
@@ -374,15 +464,45 @@ function closeCtxMenu() {
   ctxMenu.item = null
 }
 
-function editTranscript() {
+// 编辑转写 / 翻译：kind 为 'transcript' | 'translation'
+const editDialog = reactive({ visible: false, kind: '', item: null, text: '', saving: false })
+
+function openEdit(kind) {
+  const item = ctxMenu.item
   closeCtxMenu()
-  // 编辑转写内容逻辑（待实现）
+  if (!item) return
+  if (kind === 'translation' && !item.translationId) {
+    ElMessage.warning('该条暂无译文，无法编辑')
+    return
+  }
+  editDialog.kind = kind
+  editDialog.item = item
+  editDialog.text = kind === 'transcript' ? item.text : item.translation
+  editDialog.visible = true
 }
 
-function editTranslation() {
-  closeCtxMenu()
-  // 编辑翻译内容逻辑（待实现）
+const editTranscript = () => openEdit('transcript')
+const editTranslation = () => openEdit('translation')
+
+async function submitEdit() {
+  const text = editDialog.text.trim()
+  if (!text) { ElMessage.warning('内容不能为空'); return }
+  editDialog.saving = true
+  try {
+    if (editDialog.kind === 'transcript') await audioData.editTranscript(editDialog.item, text)
+    else await audioData.editTranslation(editDialog.item, text)
+    editDialog.visible = false
+    ElMessage.success('保存成功')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    editDialog.saving = false
+  }
 }
+
+// ── 场景弹窗 ───────────────────────────────────────────────────────────────
+const sceneVisible = ref(false)
+const known = (v) => !!v && v !== 'unknown'
 
 onMounted(() => {
   window.addEventListener('click', closeCtxMenu)
@@ -414,14 +534,11 @@ function createTrackState(id) {
     speed: 1,
     zoom: 1,
     loopEnabled: false,
-    skipSilence: true,
     ws: null,
     regions: null,
-    skipSilencePlugin: null,
     objectUrl: null,
     toolbar: { visible: false, left: 0, region: null },
     regionEnded: false,
-    bookmarks: [],
   })
 }
 
@@ -430,11 +547,11 @@ const stateB = createTrackState('B')
 
 // ── 聊天面板 computed（依赖 stateA，必须在 stateA 声明后定义）────────────────
 const activeTranscriptIdx = computed(() => {
-  if (!props.transcripts.length) return -1
+  if (!chatItems.value.length) return -1
   const t = stateA.currentTime
   let idx = -1
-  for (let i = 0; i < props.transcripts.length; i++) {
-    if (props.transcripts[i].startTime <= t) idx = i
+  for (let i = 0; i < chatItems.value.length; i++) {
+    if (chatItems.value[i].startTime <= t) idx = i
     else break
   }
   return idx
@@ -446,9 +563,13 @@ watch(activeTranscriptIdx, (idx) => {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 })
 
+function resolveConfig(id, cfg) {
+  return cfg.src || cfg.file ? cfg : { ...cfg, src: streamUrl(props.audioId, id) }
+}
+
 const tracks = computed(() => {
-  const result = [{ id: 'A', config: props.trackA, state: stateA }]
-  if (props.trackB) result.push({ id: 'B', config: props.trackB, state: stateB })
+  const result = [{ id: 'A', config: resolveConfig('A', props.trackA), state: stateA }]
+  if (props.trackB) result.push({ id: 'B', config: resolveConfig('B', props.trackB), state: stateB })
   return result
 })
 
@@ -577,7 +698,18 @@ async function initWaveSurfer(track) {
   const regions = RegionsPlugin.create()
   const plugins = [regions]
 
-  const skipSilencePlugin = null
+  const pk = audioData.peaksOf(track.id)
+
+  // peaks 时长与音频实际时长相差过大（如对应了别的文件）：放弃 peaks，回退为浏览器解码
+  if (pk) {
+    mediaEl.addEventListener('loadedmetadata', () => {
+      if (Math.abs(mediaEl.duration - pk.duration) > 1) {
+        console.warn(`[peaks] track ${track.id} 的 peaks 时长 ${pk.duration}s 与音频 ${mediaEl.duration}s 不符，已回退解码`)
+        audioData.rejectPeaks(track.id)
+        retryLoad(track)
+      }
+    }, { once: true })
+  }
 
   // ── 创建 WaveSurfer 实例（传入 media，跳过内部 fetch+decode）────────
   const ws = WaveSurfer.create({
@@ -601,11 +733,13 @@ async function initWaveSurfer(track) {
     hideScrollbar: true,
     cursorWidth: 2,
     plugins,
+    // 后端预计算的峰值：传入后不再由浏览器解码整个文件
+    ...(pk && { peaks: pk.peaks, duration: pk.duration }),
   })
 
   state.ws = ws
   state.regions = regions
-  state.skipSilencePlugin = skipSilencePlugin
+  ws.setPlaybackRate(state.speed)  // 设置可能先于波形创建加载完成
 
   // ── 点击 seek（区分点击与拖拽：移动 < 5px 才 seek）─────────────────────
   let _mouseDownX = 0
@@ -632,16 +766,6 @@ async function initWaveSurfer(track) {
       const other = track.id === 'A' ? stateB : stateA
       if (other.ws) other.ws.setTime(newTime)
     }
-  })
-
-  // ── 双击波形添加书签 ──────────────────────────────────────────────────
-  waveContainer.addEventListener('dblclick', (e) => {
-    if (!state.duration) return
-    const rect = waveContainer.getBoundingClientRect()
-    const time = ((e.clientX - rect.left) / rect.width) * state.duration
-    const label = prompt('书签名称', `标记 ${formatTime(time)}`)
-    if (label === null) return
-    addBookmark(track, { id: Date.now().toString(), time, label })
   })
 
   // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例，同步所有轨道）────
@@ -727,15 +851,6 @@ async function loadAudio(track) {
       state.loadError = null
       emit('ready', { trackId: track.id, duration: state.realDuration })
 
-      // 从 localStorage 恢复书签
-      const storageKey = config.src || config.file?.name
-      if (storageKey) {
-        const saved = localStorage.getItem(`vp-bookmarks:${storageKey}`)
-        if (saved) {
-          try { state.bookmarks = JSON.parse(saved) } catch (_) {}
-        }
-      }
-
       // 始终启用拖拽选区
       state.regions.enableDragSelection({ color: regionColor(track.id) })
 
@@ -774,16 +889,23 @@ async function loadAudio(track) {
   ws.on('finish', () => {
     state.isPlaying = false
     emit('finish', { trackId: track.id })
+    // 顺序播放：以主轨结束为准，进入下一条
+    if (playMode.value === 'sequence' && props.hasNext && track.id === tracks.value[0].id) {
+      emit('next')
+    }
   })
 
   // currentTime 节流：每 250ms 才更新响应式状态，避免高频触发 Vue 重渲染
   let _lastTimeUpdate = 0
   ws.on('timeupdate', (time) => {
     // 边界检测与静音跳过用局部时间，不依赖响应式
-    // peaks 模式跳过空音
-    if (state.skipSilence && config.silences?.length) {
-      const silent = config.silences.find(r => time >= r.start && time < r.end)
-      if (silent) ws.setTime(silent.end)
+    // 跳过空音：由主轨驱动；双轨时两路都处于静音才跳，并同步 seek
+    if (skipSilence.value && track.id === tracks.value[0].id) {
+      const target = findSkipTarget(time)
+      if (target != null) {
+        for (const t of tracks.value) t.state.ws?.setTime(target)
+        return
+      }
     }
 
     // 选区边界检测：用持久化锁防止异步事件重复触发
@@ -818,9 +940,35 @@ async function loadAudio(track) {
   state.loadProgress = 0
 }
 
+// ── 空音查找 ────────────────────────────────────────────────────────────
+// silences 按时间升序，二分查找包含 time 的区间
+function findSilence(list, time) {
+  let lo = 0, hi = list.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const r = list[mid]
+    if (time < r.start) hi = mid - 1
+    else if (time >= r.end) lo = mid + 1
+    else return r
+  }
+  return null
+}
+
+// 所有轨道在 time 处都是静音时，返回可跳到的时间点（最早结束者）；否则 null
+function findSkipTarget(time) {
+  let target = Infinity
+  for (const t of tracks.value) {
+    const list = transcriptState.silences[t.id]
+    const r = list?.length ? findSilence(list, time) : null
+    if (!r) return null
+    target = Math.min(target, r.end)
+  }
+  return target
+}
+
 // ── 重试加载 ─────────────────────────────────────────────────────────────
 async function retryLoad(track) {
-  stopSilenceDetection(track)
+  if (!audioData.state.peaks) await audioData.loadWaveData()
   track.state.loadError = null
   track.state.ws?.destroy()
   track.state.ws = null
@@ -831,6 +979,9 @@ async function retryLoad(track) {
 // ── 生命周期 ────────────────────────────────────────────────────────────
 onMounted(async () => {
   await nextTick()
+  // 波形/静音数据先于 WaveSurfer 创建；转写、说话人、场景并行加载，设置不阻塞
+  loadSettings()
+  await audioData.loadAll()
   for (const track of tracks.value) {
     await initWaveSurfer(track)
   }
@@ -840,8 +991,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopScrollSync()
   for (const track of tracks.value) {
-    // 停止静音检测
-    stopSilenceDetection(track)
     // 清理区间事件监听器
     if (regionListeners[track.id]) {
       regionListeners[track.id].forEach(unsub => unsub?.())
@@ -854,11 +1003,27 @@ onBeforeUnmount(() => {
   }
 })
 
+// 切换音频（上一条/下一条）：重新拉取数据并重建波形
+watch(() => props.audioId, async () => {
+  stopScrollSync()
+  for (const track of tracks.value) {
+    track.state.ws?.destroy()
+    track.state.ws = null
+    Object.assign(track.state, { currentTime: 0, duration: 0, realDuration: 0, isPlaying: false })
+    track.state.toolbar = { visible: false, left: 0, region: null }
+  }
+  _durationsAligned = false
+  await audioData.loadAll()
+  await nextTick()
+  for (const track of tracks.value) await initWaveSurfer(track)
+  startScrollSync()
+})
+
 // trackB 动态变化时初始化
 watch(() => props.trackB, async (newVal) => {
   if (newVal && !stateB.ws) {
     await nextTick()
-    await initWaveSurfer({ id: 'B', config: newVal, state: stateB })
+    await initWaveSurfer({ id: 'B', config: resolveConfig('B', newVal), state: stateB })
   }
 })
 
@@ -960,16 +1125,6 @@ function handleSetVolume(val) {
   else setVolume(tracks.value[0], val)
 }
 
-function handleCycleSpeed() {
-  if (props.trackB) cycleSpeedBoth()
-  else cycleSpeed(tracks.value[0])
-}
-
-function handleExport() {
-  if (props.trackB) exportReportBoth()
-  else exportReport(tracks.value[0])
-}
-
 function handleDownload() {
   if (props.trackB) downloadBoth()
   else downloadAudio(tracks.value[0])
@@ -1016,9 +1171,6 @@ function togglePlayBoth() {
 
   for (const track of tracks.value) {
     if (!track.state.ws || track.state.isPlaying) continue
-    if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
-      startSilenceDetection(track)
-    }
     track.state.regionEnded = false
     _regionEndLock[track.id] = false
     // 在同一同步帧内完成 setTime + play，确保 play 调用时 media.currentTime 已就位
@@ -1044,34 +1196,6 @@ function toggleMuteBoth() {
   }
 }
 
-function cycleSpeedBoth() {
-  const idx = SPEEDS.indexOf(abSpeed.value)
-  const next = SPEEDS[(idx + 1) % SPEEDS.length]
-  abSpeed.value = next
-  for (const track of tracks.value) {
-    track.state.speed = next
-    track.state.ws?.setPlaybackRate(next)
-  }
-}
-
-function exportReportBoth() {
-  const report = {
-    exportedAt: new Date().toISOString(),
-    tracks: tracks.value.map(track => ({
-      id: track.id,
-      audio: track.config.src || track.config.file?.name || 'unknown',
-      duration: track.state.duration,
-      bookmarks: track.state.bookmarks,
-    })),
-  }
-  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `report_AB_${Date.now()}.json`
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
-
 function downloadBoth() {
   for (const track of tracks.value) {
     downloadAudio(track)
@@ -1081,10 +1205,6 @@ function downloadBoth() {
 // ── 播放控制 ────────────────────────────────────────────────────────────
 function togglePlay(track) {
   if (!track.state.ws) return
-  // 首次播放时在用户手势内懒创建 AudioContext（保证以 running 状态启动，避免挂起导致音频路由失效）
-  if (track.state.skipSilence && !track.config?.silences && !analyserNodes[track.id]) {
-    startSilenceDetection(track)
-  }
   if (track.state.isPlaying) {
     track.state.ws.pause()
     track.state.isPlaying = false
@@ -1129,13 +1249,6 @@ function toggleMute(track) {
   }
 }
 
-function cycleSpeed(track) {
-  const idx = SPEEDS.indexOf(track.state.speed)
-  const next = SPEEDS[(idx + 1) % SPEEDS.length]
-  track.state.speed = next
-  track.state.ws?.setPlaybackRate(next)
-}
-
 function downloadAudio(track) {
   const url = track.state.objectUrl || track.config.src
   if (!url) return
@@ -1153,11 +1266,6 @@ function formatTime(seconds) {
   return `${m}:${s}`
 }
 
-
-// ── 跳过空音 ────────────────────────────────────────────────────────────
-// Store analyser nodes per track
-const analyserNodes = {}
-const silenceTimers = {}
 
 // ── 选区事件监听器管理 ──────────────────────────────────────────────────
 // Store unsubscribe functions per track to prevent listener accumulation
@@ -1184,73 +1292,6 @@ function syncRegionToOther(track, region) {
   if (otherTrack && newRegion) updateToolbar(otherTrack, newRegion)
 }
 
-function startSilenceDetection(track) {
-  // Guard: prevent duplicate AudioContext on same track
-  if (analyserNodes[track.id]) return
-  if (!track.state.ws) return
-  const mediaEl = track.state.ws.getMediaElement()
-  if (!mediaEl) return
-
-  const audioCtx = new AudioContext()
-  const source = audioCtx.createMediaElementSource(mediaEl)
-  const analyser = audioCtx.createAnalyser()
-  analyser.fftSize = 512
-  source.connect(analyser)
-  source.connect(audioCtx.destination)  // still play audio
-
-  analyserNodes[track.id] = { audioCtx, analyser }
-
-  const dataArray = new Float32Array(analyser.fftSize)
-  let silenceStart = null
-  const THRESHOLD = 0.001
-  const MARGIN = 0.2
-
-  function checkSilence() {
-    if (!track.state.skipSilence || !track.state.isPlaying) {
-      silenceStart = null
-      silenceTimers[track.id] = requestAnimationFrame(checkSilence)
-      return
-    }
-    analyser.getFloatTimeDomainData(dataArray)
-    const rms = Math.sqrt(dataArray.reduce((s, v) => s + v * v, 0) / dataArray.length)
-
-    if (rms < THRESHOLD) {
-      if (silenceStart === null) silenceStart = track.state.currentTime
-      else if (track.state.currentTime - silenceStart > MARGIN) {
-        // Jump forward 0.5s to escape silence
-        const newTime = Math.min(track.state.duration, track.state.currentTime + 0.5)
-        track.state.ws.setTime(newTime)
-        silenceStart = null
-      }
-    } else {
-      silenceStart = null
-    }
-    silenceTimers[track.id] = requestAnimationFrame(checkSilence)
-  }
-  silenceTimers[track.id] = requestAnimationFrame(checkSilence)
-}
-
-function stopSilenceDetection(track) {
-  if (silenceTimers[track.id]) {
-    cancelAnimationFrame(silenceTimers[track.id])
-    delete silenceTimers[track.id]
-  }
-  if (analyserNodes[track.id]) {
-    analyserNodes[track.id].audioCtx.close()
-    delete analyserNodes[track.id]
-  }
-}
-
-function toggleSkipSilence(track) {
-  track.state.skipSilence = !track.state.skipSilence
-
-  if (track.state.skipSilence) {
-    startSilenceDetection(track)
-  } else {
-    stopSilenceDetection(track)
-  }
-}
-
 // ── 选区与浮动工具条 ─────────────────────────────────────────────────────
 
 function updateToolbar(track, region) {
@@ -1268,28 +1309,6 @@ function updateToolbar(track, region) {
     left: startX + (endX - startX) / 2,
     region,
   }
-}
-
-function playRegion(track) {
-  const region = track.state.toolbar.region
-  if (!region || !track.state.ws) return
-  track.state.ws.setTime(region.start)
-  track.state.ws.play()
-  track.state.isPlaying = true
-
-  const stopAtEnd = (time) => {
-    if (time >= region.end) {
-      track.state.ws.pause()
-      track.state.isPlaying = false
-      track.state.ws.un('timeupdate', stopAtEnd)
-    }
-  }
-  track.state.ws.on('timeupdate', stopAtEnd)
-}
-
-function loopRegion(track) {
-  // 切换循环模式（loopEnabled 已在 timeupdate 中处理）
-  track.state.loopEnabled = !track.state.loopEnabled
 }
 
 async function downloadRegion(track) {
@@ -1410,34 +1429,6 @@ function handleKeydown(e, track) {
   }
 }
 
-// ── 书签 ────────────────────────────────────────────────────────────────
-function addBookmark(track, bm) {
-  track.state.bookmarks.push(bm)
-  const key = track.config.src || track.config.file?.name
-  if (key) localStorage.setItem(`vp-bookmarks:${key}`, JSON.stringify(track.state.bookmarks))
-}
-
-function removeBookmark(track, id) {
-  track.state.bookmarks = track.state.bookmarks.filter(b => b.id !== id)
-  const key = track.config.src || track.config.file?.name
-  if (key) localStorage.setItem(`vp-bookmarks:${key}`, JSON.stringify(track.state.bookmarks))
-}
-
-// ── 导出标注报告 ─────────────────────────────────────────────────────────
-function exportReport(track) {
-  const report = {
-    audio: track.config.src || track.config.file?.name || 'unknown',
-    duration: track.state.duration,
-    exportedAt: new Date().toISOString(),
-    bookmarks: track.state.bookmarks,
-  }
-  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `report_${Date.now()}.json`
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
 </script>
 
 <style lang="scss" scoped>
@@ -1458,7 +1449,6 @@ button { cursor: pointer !important; }
   --vp-time-color: #6b7280;
   --vp-slider-color: #4562bd;
   --vp-radius: 8px;
-  --vp-bookmark-color: #f59e0b;
   --vp-error-color: #ef4444;
   --vp-progress-bar-color: #6366f1;
 
@@ -1655,47 +1645,6 @@ button { cursor: pointer !important; }
     border-radius: 4px;
     line-height: 1.4;
   }
-}
-
-/* ── 书签层 ──────────────────────────────────────────────────────────── */
-.vp-bookmarks-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 10;
-}
-
-.vp-bookmark {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  pointer-events: all;
-  cursor: pointer;
-  transform: translateX(-50%);
-
-  &-line {
-    width: 2px;
-    height: 100%;
-    background: var(--vp-bookmark-color);
-    margin: 0 auto;
-  }
-
-  &-label {
-    position: absolute;
-    top: 2px;
-    left: 4px;
-    font-size: 10px;
-    color: var(--vp-bookmark-color);
-    white-space: nowrap;
-    background: var(--vp-bg);
-    padding: 0 2px;
-    border-radius: 2px;
-    opacity: 0;
-    transition: opacity 0.15s;
-    pointer-events: none;
-  }
-
-  &:hover .vp-bookmark-label { opacity: 1; }
 }
 
 /* ── 通用按钮 ────────────────────────────────────────────────────────── */
@@ -2101,4 +2050,16 @@ button { cursor: pointer !important; }
     color: #fff;
   }
 }
+
+.vp-btn--active {
+  background: var(--vp-btn-hover-bg, #eef2ff);
+  border-radius: 4px;
+}
+.vp-scene-empty { text-align: center; color: #94a3b8; padding: 24px 0; }
+.vp-scene-item { margin-bottom: 12px; }
+.vp-scene-title { font-weight: 600; }
+.vp-scene-conf { margin-left: 8px; font-weight: 400; color: #94a3b8; font-size: 12px; }
+.vp-scene-sub { color: #94a3b8; font-size: 12px; margin: 2px 0 6px; }
+.vp-scene-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.vp-scene-desc { margin-top: 12px; }
 </style>
