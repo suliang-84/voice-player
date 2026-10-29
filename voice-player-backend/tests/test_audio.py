@@ -71,9 +71,9 @@ def test_silences(client, tmp_path):
     upload(client, tmp_path, audio_id="a1")
     d = client.get(f"{API}/a1/silences").json()["data"]["tracks"]
     a = d["A"]["silences"]
-    assert len(a) == 1 and abs(a[0]["start"] - 2.0) < 0.05 and abs(a[0]["end"] - 4.0) < 0.05
+    assert len(a) == 1 and abs(a[0]["start"] - 2.0) < 0.1 and abs(a[0]["end"] - 4.0) < 0.1
     assert abs(a[0]["duration"] - (a[0]["end"] - a[0]["start"])) < 1e-6
-    assert abs(d["A"]["silencePercentage"] - 25.0) < 1
+    assert abs(d["A"]["silencePercentage"] - 25.0) < 3
     assert d["B"]["silences"] == [] and d["B"]["totalSilenceDuration"] == 0
     only_b = client.get(f"{API}/a1/silences", params={"track": "B"}).json()["data"]["tracks"]
     assert set(only_b) == {"B"}
@@ -120,3 +120,68 @@ def test_non_wav_is_transcoded(client, tmp_path):
         r = client.post("/api/v1/audios", files={"file": ("s.m4a", f)}, data={"audioId": "m4a1"})
     assert r.json()["code"] == 0 and r.json()["data"]["channels"] == 2
     assert client.get(f"{API}/m4a1/peaks").json()["code"] == 0
+
+
+def make_dialog(path, seconds=12):
+    """A 轨 0~2s、B 轨 5~7s 说话，其余时间两路都静音（带微弱底噪）；A 轨 8.0s 有一声 0.05s 的咳嗽。"""
+    import numpy as np
+    sr = 16000
+    t = np.arange(int(sr * seconds)) / sr
+    rng = np.random.default_rng(0)
+    a = 0.0005 * rng.standard_normal(len(t))
+    b = 0.0005 * rng.standard_normal(len(t))
+    a[t < 2] += 0.3 * np.sin(2 * np.pi * 440 * t[t < 2])
+    b[(t >= 5) & (t < 7)] += 0.3 * np.sin(2 * np.pi * 880 * t[(t >= 5) & (t < 7)])
+    a[(t >= 8.0) & (t < 8.05)] += 0.3 * np.sin(2 * np.pi * 440 * t[(t >= 8.0) & (t < 8.05)])
+    sf.write(path, np.stack([a, b], axis=1).astype("float32"), sr, subtype="PCM_16")
+
+
+def spans(segs):
+    return [(s["start"], s["end"]) for s in segs]
+
+
+def assert_spans(actual, expected, tol=0.1):
+    """区间边界允许 tol 秒误差（能量平滑会让边界移动数十毫秒）。"""
+    assert len(actual) == len(expected), (actual, expected)
+    for (a0, a1), (e0, e1) in zip(actual, expected):
+        assert abs(a0 - e0) <= tol and abs(a1 - e1) <= tol, (actual, expected)
+
+
+def test_silences_both_joint(client, tmp_path):
+    upload(client, tmp_path, audio_id="d1", maker=make_dialog)
+    data = client.get(f"{API}/d1/silences").json()["data"]
+    both = data["both"]
+    # 联合静音：2~5s、7~12s（8.0s 的 0.05s 咳嗽被并入静音）；每段两端各缩进 0.15s，末尾静音只缩开头
+    assert_spans(spans(both["silences"]), [(2.15, 4.85), (7.15, 12.0)])
+    # 非静音部分 = 补集，播放时不会被跳过
+    assert_spans(spans(both["activeSegments"]), [(0.0, 2.15), (4.85, 7.15)])
+    assert set(both["thresholdDb"]) == {"A", "B"} and all(-65 <= v <= -35 for v in both["thresholdDb"].values())
+    # 单轨 A：2~12s 都静音，不受 B 影响
+    a = data["tracks"]["A"]["silences"]
+    assert len(a) >= 1 and abs(a[0]["start"] - 2.0) < 0.1
+
+
+def test_silences_both_needs_both_tracks_quiet(client, tmp_path):
+    # A 轨 2~4s 静音，但 B 轨全程有声 → 联合静音为空
+    upload(client, tmp_path, audio_id="a1")
+    both = client.get(f"{API}/a1/silences").json()["data"]["both"]
+    assert both["silences"] == [] and both["totalSilenceDuration"] == 0
+    assert both["activeSegments"] == [{"start": 0.0, "end": 8.0, "duration": 8.0}]
+
+
+def test_silences_both_min_duration_and_options(client, tmp_path):
+    upload(client, tmp_path, audio_id="d1", maker=make_dialog)
+    # minDuration=4：2~5s 只有 3s 被丢弃，只剩 7~12s
+    d = client.get(f"{API}/d1/silences", params={"minDuration": 4}).json()["data"]["both"]
+    assert_spans(spans(d["silences"]), [(7.15, 12.0)])
+    # 指定 track 时不返回 both
+    assert "both" not in client.get(f"{API}/d1/silences", params={"track": "A"}).json()["data"]
+    # 固定阈值也可用
+    fixed = client.get(f"{API}/d1/silences", params={"threshold": 0.01}).json()["data"]["both"]
+    assert len(fixed["silences"]) == 2
+
+
+def test_silences_mono_both_equals_track_a(client, tmp_path):
+    upload(client, tmp_path, name="m.wav", audio_id="m1", maker=make_mono)
+    d = client.get(f"{API}/m1/silences").json()["data"]
+    assert set(d["tracks"]) == {"A"} and d["both"]["silences"] == []

@@ -13,6 +13,7 @@ from ..envelope import ok
 from ..errors import AppError
 from ..services import audio
 from ..services.peaks_cache import get_peaks
+from ..services.silence_cache import get_silences
 from ..services.storage import ALLOWED_EXTS, validate_audio_id
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(current_user)])
@@ -93,17 +94,19 @@ def peaks(request: Request, audio_id: str, track: TrackQuery = "both",
 
 
 @router.get("/audios/{audio_id}/silences")
-def silences(request: Request, audio_id: str, track: TrackQuery = "both",
-             threshold: Annotated[float | None, Query(ge=0, le=1)] = None,
-             minDuration: Annotated[float | None, Query(ge=0)] = None):
-    from datetime import datetime, timezone
+async def silences(request: Request, audio_id: str, track: TrackQuery = "both",
+                   threshold: Annotated[float | None, Query(ge=0, le=1)] = None,
+                   minDuration: Annotated[float | None, Query(ge=0)] = None,
+                   speechOffsetDb: Annotated[float | None, Query(ge=0, le=60)] = None):
     settings, storage = deps.settings_of(request), deps.storage_of(request)
-    src = storage.source_wav(audio_id)
-    result = audio.detect_silences(
-        src,
+    result = await run_in_threadpool(
+        get_silences, settings, storage, audio_id,
         settings.default_silence_threshold if threshold is None else threshold,
         settings.default_silence_min_duration if minDuration is None else minDuration,
-        settings.silence_frame_ms,
+        settings.silence_speech_offset_db if speechOffsetDb is None else speechOffsetDb,
     )
-    tracks = {tid: result[tid] for tid in select_tracks(list(result), track)}
-    return ok({"tracks": tracks, "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+    tracks = {tid: result["tracks"][tid] for tid in select_tracks(list(result["tracks"]), track)}
+    data = {"tracks": tracks, "generatedAt": result["generatedAt"]}
+    if track == "both":
+        data["both"] = result["both"]
+    return ok(data)

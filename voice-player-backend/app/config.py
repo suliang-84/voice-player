@@ -18,9 +18,14 @@ class Settings(BaseSettings):
 
     # 波形 / 静音默认值
     default_peaks_points: int = 8000
-    default_silence_threshold: float = 0.001
-    default_silence_min_duration: float = 0.2
+    default_silence_threshold: float | None = None  # RMS（0～1）；为空则按各声道底噪自适应
+    default_silence_min_duration: float = 1.0
     silence_frame_ms: int = 10
+    silence_margin_db: float = 12.0  # 自适应阈值 = 底噪 + 该值
+    silence_speech_offset_db: float = 20.0  # 自适应阈值的另一依据：语音电平 − 该值。越小越容易判静音（越激进）
+    silence_smooth_ms: int = 150  # 帧能量先做该时长的滑动平滑，抹掉数十毫秒的小杂音
+    silence_min_speech: float = 0.3  # 联合静音：夹在静音间短于该秒数的有声帧并入静音
+    silence_padding: float = 0.15  # 联合静音：可跳过区间两端各留出的秒数
 
     # 外部工具
     ffmpeg_bin: str = "ffmpeg"
