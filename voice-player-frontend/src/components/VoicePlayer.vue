@@ -116,7 +116,7 @@
       <!-- 头部：标签 + 控制栏 -->
       <div class="vp-track-header">
         <span class="vp-label">
-          <SvgIcon name="doubble_triangle" size="12px" :class="['vp-track-icon', `vp-track-icon--${track.id}`]" />
+          <SvgIcon name="doubble_triangle" size="16px" :class="['vp-track-icon', `vp-track-icon--${track.id}`]" />
           {{ track.config.label || `${track.id}路` }}
           <span v-if="speakerIdentity(track.id)" class="vp-identity">（疑似{{ speakerIdentity(track.id) }}）</span>
         </span>
@@ -677,6 +677,19 @@ function regionColor(trackId) {
     : 'rgba(69,98,189,0.2)'
 }
 
+// 倍数不超过 FIT_EPS 视为铺满（触控板的小幅滚动会累积出接近 1 的值，不能在单个事件里吸附回 1）
+const FIT_EPS = 1.02
+
+// 把"相对铺满的倍数"换算成 WaveSurfer 的 px/s：铺满 = 容器宽度 / 时长；视为铺满时传 0 恢复自适应
+function applyZoom(factor) {
+  const duration = props.trackB ? Math.max(stateA.realDuration, stateB.realDuration) : stateA.realDuration
+  for (const t of tracks.value) {
+    const width = waveRefs[t.id]?.clientWidth
+    t.state.ws?.zoom(factor <= FIT_EPS || !duration || !width ? 0 : (width / duration) * factor)
+    if (t.state.toolbar.region) updateToolbar(t, t.state.toolbar.region)
+  }
+}
+
 // ── WaveSurfer 初始化 ──────────────────────────────────────────────────
 async function initWaveSurfer(track) {
   const { config, state } = track
@@ -684,6 +697,9 @@ async function initWaveSurfer(track) {
   if (!waveContainer) return
 
   const opt = props.options || {}
+
+  // 同一路不允许并存两个播放器，残留的旧实例先销毁
+  if (state.ws) { state.ws.destroy(); state.ws = null }
 
   // ── 创建原生 audio 元素，交由浏览器流式播放，避免 WaveSurfer 完整下载解码 ──
   const url = config.file
@@ -768,42 +784,33 @@ async function initWaveSurfer(track) {
     }
   })
 
-  // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复原比例，同步所有轨道）────
+  // ── 滚轮缩放（上滚放大，下滚缩小；双击恢复铺满，同步所有轨道）────
+  // state.zoom 是相对"刚好铺满容器"的倍数：1 = 铺满，上限 maxZoom（默认 10，
+  // 即 1000 秒的音频最多放大到屏幕显示约 100 秒）
+  const maxZoom = Math.max(1, opt.maxZoom ?? 10)
   let _zoomTimer = null
   waveContainer.addEventListener('wheel', (e) => {
     e.preventDefault()
-    const delta = e.deltaY > 0 ? -5 : 5
-    const newZoom = Math.max(1, Math.min(200, (state.zoom ?? 1) + delta))
+    // 按滚轮幅度连续缩放：鼠标一格 deltaY≈100 → 约 ×1.22，触控板的小幅滑动则平滑变化
+    const dy = Math.max(-200, Math.min(200, e.deltaY))
+    const newZoom = Math.max(1, Math.min(maxZoom, (state.zoom ?? 1) * Math.exp(-dy * 0.002)))
     for (const t of tracks.value) t.state.zoom = newZoom
     if (_zoomTimer) clearTimeout(_zoomTimer)
     _zoomTimer = setTimeout(() => {
-      for (const t of tracks.value) t.state.ws?.zoom(t.state.zoom)
-      // zoom 完成后重新计算工具条位置（总宽度已变化）
-      for (const t of tracks.value) {
-        if (t.state.toolbar.region) updateToolbar(t, t.state.toolbar.region)
-      }
+      applyZoom(newZoom)
       emit('zoom-change', { zoom: newZoom })
       _zoomTimer = null
     }, 150)
   }, { passive: false })
 
   waveContainer.addEventListener('dblclick', (e) => {
-    if (state.zoom > 1) {
+    if (state.zoom > FIT_EPS) {
       e.stopImmediatePropagation()
-      for (const t of tracks.value) {
-        t.state.zoom = 1
-        t.state.ws?.zoom(1)
-      }
-      // 恢复原比例后也刷新工具条
-      setTimeout(() => {
-        for (const t of tracks.value) {
-          if (t.state.toolbar.region) updateToolbar(t, t.state.toolbar.region)
-        }
-      }, 50)
+      for (const t of tracks.value) t.state.zoom = 1
+      applyZoom(1)
+      emit('zoom-change', { zoom: 1 })
     }
   })
-
-
 
   // ── 音频加载（Task 4）──────────────────────────────────────────────
   await loadAudio(track)
@@ -1004,8 +1011,11 @@ onBeforeUnmount(() => {
   }
 })
 
-// 切换音频（上一条/下一条）：重新拉取数据并重建波形
+// 切换音频（上一条/下一条）：重新拉取数据并重建 A/B 两路波形。
+// switchSeq 防止连续点击时多次切换交叠执行；过期的切换在每个 await 之后直接放弃。
+let switchSeq = 0
 watch(() => props.audioId, async () => {
+  const seq = ++switchSeq
   stopScrollSync()
   for (const track of tracks.value) {
     track.state.ws?.destroy()
@@ -1016,14 +1026,19 @@ watch(() => props.audioId, async () => {
   _durationsAligned = false
   await audioData.loadAll()
   await nextTick()
-  for (const track of tracks.value) await initWaveSurfer(track)
+  if (seq !== switchSeq) return
+  for (const track of tracks.value) {
+    // 一路失败不能影响另一路
+    try { await initWaveSurfer(track) } catch (e) { console.error(`[switch] track ${track.id} 初始化失败`, e) }
+    if (seq !== switchSeq) return
+  }
   startScrollSync()
   audioData.loadDetails()
 })
 
-// trackB 动态变化时初始化
-watch(() => props.trackB, async (newVal) => {
-  if (newVal && !stateB.ws) {
+// trackB 从无到有时初始化。切换音频时 trackB 对象也会变，但那由 audioId 的 watch 统一重建，这里不能插手
+watch(() => props.trackB, async (newVal, oldVal) => {
+  if (newVal && !oldVal && !stateB.ws) {
     await nextTick()
     await initWaveSurfer({ id: 'B', config: resolveConfig('B', newVal), state: stateB })
   }

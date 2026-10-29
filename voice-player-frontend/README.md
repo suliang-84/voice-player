@@ -96,7 +96,7 @@ voice-player/
 | 拖拽波形 | 创建选区，弹出浮动工具条 |
 | 滚轮上滚 | 放大波形（最大 200x） |
 | 滚轮下滚 | 缩小波形（最小 1x） |
-| 双击波形 | 添加书签（zoom > 1 时双击恢复原比例） |
+| 双击波形 | 添加书签（已放大时双击恢复铺满） |
 
 ### 选区浮动工具条
 
@@ -258,7 +258,7 @@ WaveSurfer.create({ media: mediaEl, ... })
 |------|------|------|
 | 波形放大后底部统一滚动条未显示 | WaveSurfer Shadow DOM 访问方式错误 | 修复中 |
 | 播放时进度条跳跃感 | WaveSurfer `scrollIntoView` 在高缩放时直接赋值 `scrollLeft` | 已通过统一滚动条规避 |
-| 波形缩放性能卡顿 | 高频 wheel 事件触发多次重绘 | 已加 150ms 节流优化 |
+| 波形缩放性能卡顿 | 高频 wheel 事件触发多次重绘 | 已加 150ms 节流优化；缩放范围为相对铺满的 1～10 倍（`options.maxZoom` 可调） |
 | 跨域音频无法下载选区 | Web Audio API CORS 限制 | 需服务端配置响应头 |
 | SSR 不支持 | WaveSurfer 依赖浏览器 Web API | 需在客户端挂载 |
 | AudioContext 挂起 | 浏览器要求用户手势才能启动 | 已在首次播放时懒初始化 |

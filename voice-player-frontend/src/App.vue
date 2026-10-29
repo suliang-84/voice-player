@@ -32,6 +32,11 @@ const playlist = [
     trackA: { label: 'A路' },
     trackB: { label: 'B路' },
   },
+  {
+    audioId: 'audio_003',
+    trackA: { label: 'A路' },
+    trackB: { label: 'B路' },
+  },
 ]
 
 const current = ref(0)

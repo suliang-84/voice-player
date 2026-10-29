@@ -26,14 +26,19 @@ export function useAudioData(getAudioId, { onPeaksGenerated } = {}) {
 
   async function loadPeaks() {
     try {
-      state.peaks = await api.getPeaks(getAudioId())
+      const id = getAudioId()
+      const data = await api.getPeaks(id)
+      if (id !== getAudioId()) return  // 已切换到别的音频，丢弃过期结果
+      state.peaks = data
       clearError('peaks')
     } catch (e) { setError('peaks', e) }
   }
 
   async function loadSilences() {
     try {
-      const data = await api.getSilences(getAudioId())
+      const id = getAudioId()
+      const data = await api.getSilences(id)
+      if (id !== getAudioId()) return
       const result = {}
       for (const [id, t] of Object.entries(data.tracks || {})) result[id] = t.silences || []
       state.silences = result
