@@ -23,16 +23,6 @@ import VoicePlayer from './components/VoicePlayer.vue'
 // 不传 src 时，音频通过后端 /audios/{audioId}/stream 获取；也可传 src/file 覆盖
 const playlist = [
   {
-    audioId: 'audio_001',
-    trackA: { label: 'A路' },
-    trackB: { label: 'B路' },
-  },
-  {
-    audioId: 'audio_002',
-    trackA: { label: 'A路' },
-    trackB: { label: 'B路' },
-  },
-  {
     audioId: 'audio_003',
     trackA: { label: 'A路' },
     trackB: { label: 'B路' },

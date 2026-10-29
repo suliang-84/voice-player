@@ -11,7 +11,8 @@ const TASK_NOT_DONE = 40002
 export function useAudioData(getAudioId, { onPeaksGenerated } = {}) {
   const state = reactive({
     peaks: null,            // { duration, tracks: { A: {peaks}, B: {peaks} } }
-    silences: {},           // { A: [{start,end}], B: [...] }
+    skipRanges: [],         // 两路同时静音、可跳过的区间 [{start,end}]
+    activeRanges: [],       // 与之互补的有声部分 [{start,end}]，用于在波形上标记
     transcriptStatus: '',   // completed | processing | failed | ''
     transcriptProgress: 0,
     transcriptItems: [],
@@ -39,9 +40,8 @@ export function useAudioData(getAudioId, { onPeaksGenerated } = {}) {
       const id = getAudioId()
       const data = await api.getSilences(id)
       if (id !== getAudioId()) return
-      const result = {}
-      for (const [id, t] of Object.entries(data.tracks || {})) result[id] = t.silences || []
-      state.silences = result
+      state.skipRanges = data.both?.silences || []
+      state.activeRanges = data.both?.activeSegments || []
       clearError('silences')
     } catch (e) { setError('silences', e) }
   }
@@ -107,7 +107,8 @@ export function useAudioData(getAudioId, { onPeaksGenerated } = {}) {
   function resetData() {
     state.peaks = null
     rejectedPeaks.clear()
-    state.silences = {}
+    state.skipRanges = []
+    state.activeRanges = []
     state.transcriptStatus = ''
     state.transcriptProgress = 0
     state.transcriptItems = []

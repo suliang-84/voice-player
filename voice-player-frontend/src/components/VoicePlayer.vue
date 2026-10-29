@@ -622,6 +622,8 @@ async function alignDurations() {
     // 通过 monkey-patch 强制返回 maxDur，使两路进度条以相同基准渲染。
     ws.getDuration = () => maxDur
   }
+  // 对齐后时长基准变了，有声标记按新基准重画
+  for (const track of tracks.value) renderActiveMarks(track)
 }
 
 // WaveSurfer v7 结构：waveRefs[id] → firstElementChild (shadow host) → shadowRoot → .scroll
@@ -890,6 +892,7 @@ async function loadAudio(track) {
     }
 
     // 每次 ready（含对齐后触发的）都尝试对齐，_durationsAligned 保证只执行一次
+    renderActiveMarks(track)
     alignDurations()
   })
 
@@ -906,7 +909,7 @@ async function loadAudio(track) {
   let _lastTimeUpdate = 0
   ws.on('timeupdate', (time) => {
     // 边界检测与静音跳过用局部时间，不依赖响应式
-    // 跳过空音：由主轨驱动；双轨时两路都处于静音才跳，并同步 seek
+    // 跳过空音：由主轨驱动；落在联合静音区间（双轨即两路都静音）内就跳，并同步 seek
     if (skipSilence.value && track.id === tracks.value[0].id) {
       const target = findSkipTarget(time)
       if (target != null) {
@@ -961,16 +964,36 @@ function findSilence(list, time) {
   return null
 }
 
-// 所有轨道在 time 处都是静音时，返回可跳到的时间点（最早结束者）；否则 null
+// 后端已按「A、B 两路同时低于阈值」算好联合静音区间（两端留有余量）：time 落在区间内就返回区间结束点
 function findSkipTarget(time) {
-  let target = Infinity
-  for (const t of tracks.value) {
-    const list = transcriptState.silences[t.id]
-    const r = list?.length ? findSilence(list, time) : null
-    if (!r) return null
-    target = Math.min(target, r.end)
+  return findSilence(transcriptState.skipRanges, time)?.end ?? null
+}
+
+// ── 波形上标出有声（非静音）部分 ────────────────────────────────────────
+// 色块画在 WaveSurfer 的 wrapper 里（随缩放、滚动一起走），位置用占总时长的百分比。
+// WaveSurfer 在 shadow DOM 内，页面样式作用不到，所以全部用行内样式；z-index:-1 让色块垫在波形下面。
+const ACTIVE_MARKS_ATTR = 'data-vp-active-marks'
+
+function renderActiveMarks(track) {
+  const ws = track.state.ws
+  if (!ws) return
+  const wrapper = ws.getWrapper()
+  wrapper.querySelector(`[${ACTIVE_MARKS_ATTR}]`)?.remove()
+  // 双轨以对齐后的最大时长为基准，与 seek 的计算一致
+  const duration = props.trackB ? Math.max(stateA.realDuration, stateB.realDuration) : track.state.realDuration
+  const ranges = transcriptState.activeRanges
+  if (!duration || !transcriptState.skipRanges.length) return
+  const rgb = track.id === 'B' ? '15,171,157' : '44,145,228'
+  const layer = document.createElement('div')
+  layer.setAttribute(ACTIVE_MARKS_ATTR, '')
+  layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:-1'
+  for (const r of ranges) {
+    const seg = document.createElement('div')
+    seg.style.cssText = `position:absolute;top:0;bottom:0;left:${(r.start / duration) * 100}%;` +
+      `width:${((r.end - r.start) / duration) * 100}%;background:rgba(${rgb},.12);border-bottom:3px solid rgba(${rgb},.5)`
+    layer.appendChild(seg)
   }
-  return target
+  wrapper.appendChild(layer)
 }
 
 // ── 重试加载 ─────────────────────────────────────────────────────────────
