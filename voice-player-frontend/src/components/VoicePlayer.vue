@@ -979,6 +979,7 @@ function renderActiveMarks(track) {
   if (!ws) return
   const wrapper = ws.getWrapper()
   wrapper.querySelector(`[${ACTIVE_MARKS_ATTR}]`)?.remove()
+  if (!skipSilence.value) return  // 只在开启「跳过空音」时显示
   // 双轨以对齐后的最大时长为基准，与 seek 的计算一致
   const duration = props.trackB ? Math.max(stateA.realDuration, stateB.realDuration) : track.state.realDuration
   const ranges = transcriptState.activeRanges
@@ -995,6 +996,9 @@ function renderActiveMarks(track) {
   }
   wrapper.appendChild(layer)
 }
+
+// 开关切换（含启动时从设置恢复）：标记随之显示或消失
+watch(skipSilence, () => { for (const track of tracks.value) renderActiveMarks(track) })
 
 // ── 重试加载 ─────────────────────────────────────────────────────────────
 async function retryLoad(track) {
