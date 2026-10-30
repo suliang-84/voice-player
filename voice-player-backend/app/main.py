@@ -18,6 +18,13 @@ from .services.storage import Storage
 log = logging.getLogger("voice_player")
 
 
+def build_llm(settings: Settings) -> LlmClient | None:
+    if settings.llm_provider.lower() == "mock":
+        from .services.mock import MockLlm
+        return MockLlm(settings)
+    return LlmClient(settings) if settings.llm_enabled else None
+
+
 def create_app(settings: Settings | None = None, *, asr: AsrProvider | None = None,
                asr_error: str = "", llm: LlmClient | None = None) -> FastAPI:
     """asr / llm 可注入（测试用）；未注入时按配置构建。"""
@@ -33,7 +40,7 @@ def create_app(settings: Settings | None = None, *, asr: AsrProvider | None = No
         hub = Hub()
         hub.bind_loop(asyncio.get_running_loop())
         provider, err = (asr, asr_error) if asr is not None else build_provider(settings)
-        client = llm or (LlmClient(settings) if settings.llm_enabled else None)
+        client = llm or build_llm(settings)
         storage = Storage(settings)
         pipeline = Pipeline(settings, db, storage, hub, provider, err, client)
         app.state.settings, app.state.db, app.state.hub = settings, db, hub

@@ -10,11 +10,11 @@ SECRET = "test-secret"
 
 def test_settings_defaults_and_merge(client):
     d = client.get(f"{API}/users/settings").json()["data"]
-    assert d == {"playback": {"defaultSpeed": 1.0, "seekStep": 5, "playMode": "single", "skipSilence": False},
+    assert d == {"playback": {"defaultSpeed": 1.0, "seekStep": 5, "playMode": "single", "skipSilence": False, "stereo": False},
                  "ui": {"theme": "light", "chatPanelVisible": False}}
     r = client.put(f"{API}/users/settings", json={"playback": {"seekStep": 10}, "ui": {"theme": "dark"}}).json()
     assert r["message"] == "设置更新成功" and r["data"]["updatedAt"].endswith("Z")
-    assert r["data"]["playback"] == {"defaultSpeed": 1.0, "seekStep": 10, "playMode": "single", "skipSilence": False}
+    assert r["data"]["playback"] == {"defaultSpeed": 1.0, "seekStep": 10, "playMode": "single", "skipSilence": False, "stereo": False}
     # 部分更新：未传字段保持，且已持久化
     client.put(f"{API}/users/settings", json={"playback": {"skipSilence": True}})
     d = client.get(f"{API}/users/settings").json()["data"]

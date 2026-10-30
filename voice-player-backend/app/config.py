@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     database_url: str = ""  # 为空时使用 data_dir/voice_player.db（SQLite）
     max_upload_bytes: int = 500 * 1024 * 1024
 
+    # 音频入口：生产环境由入库系统调用 /ingest 提交（按地址拉取），上传接口只用于开发测试
+    upload_enabled: bool = True
+    ingest_allowed_hosts: str = ""  # 逗号分隔的主机名（可带端口）；为空则不接受任何地址，/ingest 不可用
+    ingest_timeout: int = 120  # 下载音频的读写超时（秒）
+
     # 波形 / 静音默认值
     default_peaks_points: int = 8000
     default_silence_threshold: float | None = None  # RMS（0～1）；为空则按各声道底噪自适应
@@ -43,9 +48,11 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"
     whisper_compute_type: str = "default"
     asr_load_timeout: float = 120  # 转写任务等待模型加载（首次使用需下载）的最长秒数
+    mock_delay: float = 3.0  # ASR_PROVIDER=mock 时每个声道模拟的处理时长（秒），用来演示转写进度
     asr_retry_interval: float = 60  # 模型加载失败后，隔多久才允许在下次访问时重新加载（期间前端能稳定看到失败原因）
 
     # 大模型（OpenAI 兼容接口）：用于身份推断、场景分析、翻译；未配置则退回 unknown / 空
+    llm_provider: str = ""  # 设为 mock 使用内置的假大模型（固定的身份、场景、翻译），不需要配置下面的地址
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""

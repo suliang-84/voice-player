@@ -170,3 +170,30 @@ def extract_channel(src: Path, channel: int, out: Path) -> None:
             if len(data) == 0:
                 break
             w.write(data[:, channel])
+
+
+def render_wav(src: Path, out: Path, mode: str, start: float | None = None, end: float | None = None) -> None:
+    """按模式把 src 的 [start, end] 秒写成 PCM16 WAV，分块读写，内存不随音频长度增长。
+    mode：A / B 取单个声道；mix 两路平均成单声道；stereo 保持 A 左 B 右（单声道源只有 A，写成单声道）。"""
+    with sf.SoundFile(src) as f:
+        sr, nch = f.samplerate, min(2, f.channels)
+        first = 0 if start is None else min(f.frames, max(0, round(start * sr)))
+        last = f.frames if end is None else min(f.frames, max(first, round(end * sr)))
+        f.seek(first)
+        remaining = last - first
+        out_channels = 2 if mode == "stereo" and nch == 2 else 1
+        with sf.SoundFile(out, "w", samplerate=sr, channels=out_channels, format="WAV", subtype="PCM_16") as w:
+            while remaining > 0:
+                data = f.read(min(BLOCK_FRAMES, remaining), dtype="float32", always_2d=True)
+                if len(data) == 0:
+                    break
+                remaining -= len(data)
+                data = data[:, :2]
+                if mode == "A":
+                    w.write(data[:, 0])
+                elif mode == "B":
+                    w.write(data[:, 1])
+                elif mode == "mix":
+                    w.write(data.mean(axis=1))
+                else:
+                    w.write(data if out_channels == 2 else data[:, 0])

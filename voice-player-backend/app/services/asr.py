@@ -98,6 +98,9 @@ def build_provider(settings: Settings) -> tuple[AsrProvider | None, str]:
     name = settings.asr_provider.lower()
     if name in ("", "none"):
         return None, "未配置转写引擎：请设置 ASR_PROVIDER=faster-whisper"
+    if name == "mock":
+        from .mock import MockAsrProvider
+        return MockAsrProvider(settings), ""
     if name == "faster-whisper":
         try:
             return FasterWhisperProvider(settings), ""

@@ -14,7 +14,8 @@ from ..services.pipeline import _iso
 router = APIRouter(prefix="/api/v1")
 
 DEFAULTS = {
-    "playback": {"defaultSpeed": 1.0, "seekStep": 5, "playMode": "single", "skipSilence": False},
+    "playback": {"defaultSpeed": 1.0, "seekStep": 5, "playMode": "single", "skipSilence": False,
+                 "stereo": False},
     "ui": {"theme": "light", "chatPanelVisible": False},
 }
 
@@ -24,6 +25,7 @@ class PlaybackPatch(BaseModel):
     seekStep: float | None = None
     playMode: str | None = None
     skipSilence: bool | None = None
+    stereo: bool | None = None
 
 
 class UiPatch(BaseModel):

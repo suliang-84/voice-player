@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 
 from ..config import Settings
 from ..db import Database
+from ..errors import AppError
 from ..models import Analysis, Task, Transcript, Translation
 from . import audio
 from .asr import AsrProvider, AsrUnavailable
@@ -73,6 +74,15 @@ class Pipeline:
             s.commit()
         self._submit(audio_id)
         return task
+
+    def reset(self, audio_id: str) -> None:
+        """清掉该音频的任务与转写、翻译、分析结果（重新入库时用）；正在处理的不允许清。"""
+        if audio_id in self._inflight:
+            raise AppError(409, "该音频正在处理，请稍后再试", http_status=409)
+        with self.db.session() as s:
+            for model in (Transcript, Translation, Analysis, Task):
+                s.execute(delete(model).where(model.audio_id == audio_id))
+            s.commit()
 
     def resume_unfinished(self) -> None:
         with self.db.session() as s:

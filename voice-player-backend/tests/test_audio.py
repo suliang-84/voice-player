@@ -185,3 +185,59 @@ def test_silences_mono_both_equals_track_a(client, tmp_path):
     upload(client, tmp_path, name="m.wav", audio_id="m1", maker=make_mono)
     d = client.get(f"{API}/m1/silences").json()["data"]
     assert set(d["tracks"]) == {"A"} and d["both"]["silences"] == []
+
+
+def _get_wav(client, tmp_path, audio_id, **params):
+    r = client.get(f"{API}/{audio_id}/download", params=params)
+    assert r.status_code == 200, r.text
+    out = tmp_path / "dl.wav"
+    out.write_bytes(r.content)
+    data, sr = sf.read(out, dtype="float32", always_2d=True)
+    return r, data, sr
+
+
+def test_download_single_track_and_filename(client, tmp_path):
+    import numpy as np
+    upload(client, tmp_path, audio_id="a1")
+    r, data, sr = _get_wav(client, tmp_path, "a1", track="B")
+    assert data.shape == (8 * 16000, 1) and r.headers["content-type"] == "audio/wav"
+    assert 'a1_B.wav' in r.headers["content-disposition"] and "attachment" in r.headers["content-disposition"]
+    assert abs(float(np.abs(data).max()) - 0.3) < 0.01  # B 轨振幅 0.3
+
+
+def test_download_mix_and_stereo(client, tmp_path):
+    import numpy as np
+    upload(client, tmp_path, audio_id="a1")
+    _, a, _ = _get_wav(client, tmp_path, "a1", track="A")
+    _, b, _ = _get_wav(client, tmp_path, "a1", track="B")
+    _, stereo, _ = _get_wav(client, tmp_path, "a1", track="stereo")
+    _, mix, _ = _get_wav(client, tmp_path, "a1", track="mix")
+    assert stereo.shape[1] == 2 and mix.shape[1] == 1
+    assert np.allclose(stereo[:, 0], a[:, 0], atol=1e-3) and np.allclose(stereo[:, 1], b[:, 0], atol=1e-3)  # A 左 B 右
+    assert np.allclose(mix[:, 0], (a[:, 0] + b[:, 0]) / 2, atol=2e-3)  # 混音 = 两路平均
+
+
+def test_download_region(client, tmp_path):
+    import numpy as np
+    upload(client, tmp_path, audio_id="a1")
+    _, data, sr = _get_wav(client, tmp_path, "a1", track="A")
+    r, clip, _ = _get_wav(client, tmp_path, "a1", track="A", start=1.0, end=3.5)
+    assert abs(len(clip) / sr - 2.5) < 0.001 and "a1_A_1.0-3.5s.wav" in r.headers["content-disposition"]
+    assert np.allclose(clip[:, 0], data[sr:int(3.5 * sr), 0], atol=1e-4)
+    _, stereo_clip, _ = _get_wav(client, tmp_path, "a1", track="stereo", start=6.0)  # 只给 start：截到末尾
+    assert stereo_clip.shape == (2 * sr, 2)
+    # 下载接口不留临时文件
+    assert not list((tmp_path / "data" / "cache" / "a1").glob("download_*"))
+
+
+def test_download_validation(client, tmp_path):
+    upload(client, tmp_path, audio_id="a1")
+    upload(client, tmp_path, name="m.wav", audio_id="m1", maker=make_mono)
+    assert client.get(f"{API}/a1/download", params={"track": "X"}).status_code == 400
+    assert client.get(f"{API}/a1/download", params={"start": 5, "end": 3}).json()["code"] == 400
+    assert client.get(f"{API}/a1/download", params={"start": 99}).json()["code"] == 400
+    assert client.get(f"{API}/m1/download", params={"track": "B"}).json()["code"] == 400
+    assert client.get(f"{API}/nope/download").status_code == 404
+    # 单声道源：mix / stereo 都得到单声道
+    _, mono, _ = _get_wav(client, tmp_path, "m1", track="stereo")
+    assert mono.shape[1] == 1
