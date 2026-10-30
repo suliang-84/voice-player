@@ -79,7 +79,7 @@ cp .env.example .env               # 默认 ASR_PROVIDER=mock、LLM_PROVIDER=moc
 ### 引擎加载慢或失败（faster-whisper）
 
 任务最多等待 `ASR_LOAD_TIMEOUT` 秒（默认 120），模型仍未就绪就置为 `failed`，`error` 说明原因，不会一直停在 0%。模型就绪后下次访问自动重试；加载失败时需隔 `ASR_RETRY_INTERVAL` 秒（默认 60）才重新尝试加载。离线环境可把 `WHISPER_MODEL` 设为本地的 faster-whisper 模型目录。
-**已知问题：** 在开发机上该引擎报 `open() got an unexpected keyword argument 'metadata_errors'`（疑为依赖版本不匹配，未排查）。因为这类错误不属于「引擎不可用」，任务会停在 `failed` 而不会自动重试；切换引擎后需要清掉对应的失败任务（删除 `tasks` 表里该 `audio_id` 的记录），或用 `ingest` 的 `force=true` 重新处理。
+**已知问题：** 在开发机上该引擎报 `open() got an unexpected keyword argument 'metadata_errors'`（疑为依赖版本不匹配，未排查）。因为这类错误不属于「引擎不可用」，任务会停在 `failed` 而不会自动重试；切换引擎后需要重新处理：用 `ingest` 的 `force=true`（推荐，会清掉该音频的转写、翻译、分析），或手动删除 `tasks`、`transcripts`、`translations`、`analyses` 四张表里该 `audio_id` 的记录（只删 `tasks` 的话，旧的翻译行会残留并和新译文一起返回）。
 
 ## 已知限制
 

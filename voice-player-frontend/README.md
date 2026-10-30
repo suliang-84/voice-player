@@ -177,7 +177,7 @@ VoicePlayer.vue
 │   ├── loadAudio()            音频加载 + 事件监听
 │   ├── 播放控制函数群
 │   ├── 双轨统一控制函数群
-│   ├── 跳过空音检测（Web Audio API AnalyserNode）
+│   ├── 跳过空音（后端联合静音区间 + 波形有声标记）
 │   ├── 选区 + 浮动工具条管理
 │   ├── 书签 + 批注管理
 │   ├── WAV 编码（audioBufferToWav）
