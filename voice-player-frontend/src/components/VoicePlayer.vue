@@ -39,7 +39,12 @@
           :title="skipSilence ? '跳过空音：已开启' : '跳过空音：已关闭'">
           <SvgIcon name="null" size="20px" />
         </button>
-        <button class="vp-btn" @click="handleDownload" title="下载">
+        <button v-if="props.trackB" class="vp-btn" :class="{ 'vp-btn--active': stereo }" @click="toggleStereo"
+          :title="stereo ? '立体声：已开启（A 路左耳、B 路右耳）' : '立体声：已关闭（混声）'">
+          <SvgIcon name="stereo" size="20px" />
+        </button>
+        <button class="vp-btn" @click="handleDownload"
+          :title="props.trackB ? (stereo ? '下载（立体声合并）' : '下载（混声合并）') : '下载'">
           <SvgIcon name="download" size="20px" />
         </button>
         <button class="vp-btn" @click="toggleTheme" title="切换主题">
@@ -283,7 +288,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } 
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import { ElMessage } from 'element-plus'
-import { getUserSettings, updateUserSettings, streamUrl } from '../api'
+import { getUserSettings, updateUserSettings, streamUrl, downloadUrl } from '../api'
 import { useAudioData } from '../composables/useAudioData'
 
 // ── Props ──────────────────────────────────────────────────────────────────
@@ -328,6 +333,7 @@ const seekStep = ref(5)
 const playMode = ref('single')
 const theme = ref('light')
 const skipSilence = ref(false)
+const stereo = ref(false)  // false 混声（两路居中）；true 立体声（A 左 B 右）
 
 const DARK_THEME = {
   '--vp-bg': '#0f172a',
@@ -396,6 +402,7 @@ async function loadSettings() {
     if (playback.seekStep) seekStep.value = playback.seekStep
     if (playback.playMode) playMode.value = playback.playMode
     if (playback.skipSilence != null) skipSilence.value = playback.skipSilence
+    if (playback.stereo != null) stereo.value = playback.stereo
     if (ui.theme) applyTheme(ui.theme)
     if (ui.chatPanelVisible != null) chatVisible.value = ui.chatPanelVisible
   } catch (e) {
@@ -417,6 +424,11 @@ function toggleChat() {
 function toggleSkipSilence() {
   skipSilence.value = !skipSilence.value
   saveSettings({ playback: { skipSilence: skipSilence.value } })
+}
+
+function toggleStereo() {
+  stereo.value = !stereo.value
+  saveSettings({ playback: { stereo: stereo.value } })
 }
 
 function openSettings() {
@@ -708,9 +720,9 @@ async function initWaveSurfer(track) {
     ? (state.objectUrl = URL.createObjectURL(config.file))
     : config.src
   const mediaEl = document.createElement('audio')
+  mediaEl.crossOrigin = 'anonymous'  // 必须先于 src：立体声要用 WebAudio 处理，跨域音频没有 CORS 就只有静音
   mediaEl.src = url || ''
   mediaEl.preload = 'auto'
-  mediaEl.crossOrigin = 'anonymous'
 
   // ── 构建插件列表 ────────────────────────────────────────────────────
   const regions = RegionsPlugin.create()
@@ -757,6 +769,7 @@ async function initWaveSurfer(track) {
 
   state.ws = ws
   state.regions = regions
+  wirePan(track)
   ws.setPlaybackRate(state.speed)  // 设置可能先于波形创建加载完成
 
   // ── 点击 seek（区分点击与拖拽：移动 < 5px 才 seek）─────────────────────
@@ -997,6 +1010,46 @@ function renderActiveMarks(track) {
   wrapper.appendChild(layer)
 }
 
+// ── 混声 / 立体声 ────────────────────────────────────────────────────────
+// 混声：两路用原生 <audio> 播放，各自居中。立体声：A 路只进左耳、B 路只进右耳，要经 WebAudio 声像节点。
+// createMediaElementSource 之后声音只走节点图，而 AudioContext 必须在用户操作后才会运行，
+// 所以从未开启过立体声时不建图（保持原生播放）；建图和 resume 都放在用户操作里（点开关、点播放）。
+let audioCtx = null
+const panGraph = {}  // trackId → { media, source, panner }
+
+function trackPan(id) { return stereo.value && props.trackB ? (id === 'A' ? -1 : 1) : 0 }
+
+function wirePan(track) {
+  const media = track.state.ws?.getMediaElement()
+  if (!audioCtx || !media) return
+  const old = panGraph[track.id]
+  if (old?.media === media) {
+    old.panner.pan.value = trackPan(track.id)
+    return
+  }
+  old?.source.disconnect()
+  old?.panner.disconnect()
+  const source = audioCtx.createMediaElementSource(media)
+  const panner = audioCtx.createStereoPanner()
+  panner.pan.value = trackPan(track.id)
+  source.connect(panner).connect(audioCtx.destination)
+  panGraph[track.id] = { media, source, panner }
+}
+
+function resumeAudio() {
+  if (audioCtx?.state === 'suspended') audioCtx.resume()
+}
+
+function applyStereo() {
+  if (!audioCtx) {
+    if (!stereo.value) return
+    audioCtx = new AudioContext()
+  }
+  resumeAudio()
+  for (const track of tracks.value) wirePan(track)
+}
+watch(stereo, applyStereo)
+
 // 开关切换（含启动时从设置恢复）：标记随之显示或消失
 watch(skipSilence, () => { for (const track of tracks.value) renderActiveMarks(track) })
 
@@ -1024,6 +1077,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  audioCtx?.close()
   stopScrollSync()
   for (const track of tracks.value) {
     // 清理区间事件监听器
@@ -1169,9 +1223,26 @@ function handleSetVolume(val) {
   else setVolume(tracks.value[0], val)
 }
 
+// 有 audioId 且轨道没有用 src / file 覆盖时，下载交给后端（单路、合并、选区都在后端处理）；
+// 否则（外部文件、本地文件）退回浏览器本地处理
+function usesBackend(track) {
+  const cfg = track.id === 'A' ? props.trackA : props.trackB
+  return !(cfg?.src || cfg?.file)
+}
+
+function startDownload(url) {
+  const a = document.createElement('a')
+  a.href = url
+  a.click()
+}
+
+// 顶部下载：双轨按当前模式合并（混声 → 单声道混音；立体声 → A 左 B 右）
 function handleDownload() {
-  if (props.trackB) downloadBoth()
-  else downloadAudio(tracks.value[0])
+  if (!props.trackB) return downloadAudio(tracks.value[0])
+  if (tracks.value.every(usesBackend)) {
+    return startDownload(downloadUrl(props.audioId, { track: stereo.value ? 'stereo' : 'mix' }))
+  }
+  downloadBoth()
 }
 
 function setVolumeBoth(val) {
@@ -1187,6 +1258,7 @@ function setVolumeBoth(val) {
 }
 
 function togglePlayBoth() {
+  resumeAudio()
   const playing = bothPlaying.value
   if (playing) {
     for (const track of tracks.value) {
@@ -1248,6 +1320,7 @@ function downloadBoth() {
 
 // ── 播放控制 ────────────────────────────────────────────────────────────
 function togglePlay(track) {
+  resumeAudio()
   if (!track.state.ws) return
   if (track.state.isPlaying) {
     track.state.ws.pause()
@@ -1294,6 +1367,7 @@ function toggleMute(track) {
 }
 
 function downloadAudio(track) {
+  if (usesBackend(track)) return startDownload(downloadUrl(props.audioId, { track: track.id }))
   const url = track.state.objectUrl || track.config.src
   if (!url) return
   const a = document.createElement('a')
@@ -1358,6 +1432,9 @@ function updateToolbar(track, region) {
 async function downloadRegion(track) {
   const region = track.state.toolbar.region
   if (!region) return
+  if (usesBackend(track)) {
+    return startDownload(downloadUrl(props.audioId, { track: track.id, start: region.start, end: region.end }))
+  }
   const url = track.state.objectUrl || track.config.src
   if (!url) return
 

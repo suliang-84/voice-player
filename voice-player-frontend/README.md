@@ -20,34 +20,25 @@
 ## 目录结构
 
 ```
-voice-player/
+voice-player-frontend/
 ├── index.html
 ├── package.json
-├── vite.config.js
+├── vite.config.js                # 开发代理：/api、/ws → VITE_PROXY_TARGET（默认 http://localhost:10090）
 ├── README.md
 ├── scripts/
-│   └── gen-peaks.js              # 超长音频 peaks 预生成脚本（Node.js）
-├── public/
-│   ├── demo.mp3                  # 单轨演示音频（39 KB）
-│   ├── demo-a.mp3                # 双轨 A 路演示音频（8.6 MB，约 9 分钟）
-│   └── demo-b.mp3                # 双轨 B 路演示音频（13 MB，约 14 分钟）
+│   ├── gen-peaks.js              # 超长音频 peaks 预生成脚本（Node.js）
+│   └── mock-server.js            # ⚠ 旧的前端 mock 服务，已不可用（见「对接后端」），请用后端的 mock 模式
+├── public/                       # 静态资源（目前没有；演示音频已移到后端 demo/）
 └── src/
     ├── main.js                   # Vue 应用入口（注册全局组件和插件）
-    ├── App.vue                   # 演示页（双轨模式）
+    ├── App.vue                   # 演示页：播放列表（audioId 在这里配置）
     ├── components/
-    │   ├── VoicePlayer.vue       # ⭐ 核心播放器组件（约 1650 行）
+    │   ├── VoicePlayer.vue       # ⭐ 核心播放器组件（单文件，约 1700 行）
     │   └── SvgIcon.vue           # SVG 图标包装组件
-    └── icons/                    # SVG 图标库
-        ├── play.svg
-        ├── pause.svg
-        ├── previous.svg
-        ├── next.svg
-        ├── rewind.svg
-        ├── forward.svg
-        ├── volume_up.svg
-        ├── volume_off.svg
-        ├── download.svg
-        └── setting.svg
+    ├── composables/
+    │   └── useAudioData.js       # 按 audioId 拉取波形、静音、转写、译文、说话人、场景
+    ├── api/                      # request.js（axios）、index.js（接口与下载地址）、auth.js、ws.js、peaks.js
+    └── icons/                    # SVG 图标（vite-plugin-svg-icons 自动注册，文件名即图标名，如 stereo、null = 跳过空音）
 ```
 
 ---
@@ -58,15 +49,17 @@ voice-player/
 
 | 控件 | 功能 |
 |------|------|
-| 上一条 | 跳到音频开头（`ws.setTime(0)`） |
+| 上一条 | 有上一条时触发 `prev` 事件（由外层切换 `audioId`），没有则回到音频开头 |
 | 回退 | 后退 N 秒（默认 5 秒，可在设置中调整） |
 | 播放/暂停 | AB 双轨同步播放/暂停 |
 | 快进 | 快进 N 秒 |
-| 下一条 | 跳到音频结尾 |
+| 下一条 | 有下一条时触发 `next` 事件；播放模式为「顺序播放」时，主轨结束会自动触发 |
 | 静音/取消静音 | AB 双轨统一静音 |
 | 音量滑块 | AB 双轨统一音量控制 |
 | 设置按钮 | 打开设置对话框 |
-| 下载按钮 | 下载 AB 双轨音频文件 |
+| 跳过空音 | 开启后，A、B 两路**同时**静音的区间自动跳过，并在波形上标出有声部分；关闭则标记消失。状态保存到用户设置 |
+| 立体声 | 仅双轨显示。默认**混声**（两路居中）；开启后 A 路只在左耳、B 路只在右耳。状态保存到用户设置 |
+| 下载按钮 | 下载两路合并的 WAV：混声时为单声道混音，立体声时为 A 左 B 右（悬停提示会写明当前模式） |
 
 ### 设置对话框
 
@@ -86,7 +79,7 @@ voice-player/
 | 轨道标签 | 左上角 | 显示 A/B 路名称 |
 | 时间显示 | 右侧 | `当前时间 / 总时长` |
 | 静音按钮 | 右侧 | 单独静音当前轨道 |
-| 下载按钮 | 右侧 | 单独下载当前轨道音频 |
+| 下载按钮 | 右侧 | 只下载当前这一路的 WAV |
 
 ### 波形交互
 
@@ -104,9 +97,26 @@ voice-player/
 
 | 按钮 | 功能 |
 |------|------|
-| ↓ | 下载选区片段（WAV 格式） |
+| ↓ | 只下载该路选区内的片段（WAV） |
 | ✎ | 为选区添加文字批注 |
 | ✕ | 清除选区 |
+
+### 跳过空音与有声标记
+
+- 区间由后端 `GET /audios/{id}/silences` 的 `both` 字段给出（两路同时低于自适应阈值、至少 1 秒，两端各留 0.15 秒），前端不自己算。
+- 播放时进入区间就跳到区间末尾，A、B 两路一起 seek；波形上用浅色底和底边线标出**有声**部分，随缩放、滚动移动。开关关闭时标记消失。
+- 灵敏度由后端配置（`SILENCE_SPEECH_OFFSET_DB` 等），前端没有调节界面。
+
+### 混声 / 立体声
+
+- 混声：两路用原生 `<audio>` 播放，各自居中。立体声：经 WebAudio 的声像节点，A 路 pan=-1、B 路 pan=+1。
+- 为避免浏览器的自动播放限制，**只有开启过立体声才会创建 AudioContext**，并在用户点击、播放时 resume。
+- 音频需同源或带 CORS 头（`crossOrigin='anonymous'`），否则 WebAudio 输出静音。
+
+### 下载
+
+- 有 `audioId` 且没有用 `src` / `file` 覆盖时，下载都交给后端 `GET /audios/{id}/download`（单路、合并、选区截取在服务端完成，浏览器直接导航下载，文件名由后端给出）。
+- 传入外部 `src` / `file` 时退回浏览器本地处理：单路直接下载该地址；选区在浏览器里解码后截取（受 CORS 限制，长音频很占内存）。
 
 ### 键盘快捷键
 
@@ -259,7 +269,7 @@ WaveSurfer.create({ media: mediaEl, ... })
 | 波形放大后底部统一滚动条未显示 | WaveSurfer Shadow DOM 访问方式错误 | 修复中 |
 | 播放时进度条跳跃感 | WaveSurfer `scrollIntoView` 在高缩放时直接赋值 `scrollLeft` | 已通过统一滚动条规避 |
 | 波形缩放性能卡顿 | 高频 wheel 事件触发多次重绘 | 已加 150ms 节流优化；缩放范围为相对铺满的 1～10 倍（`options.maxZoom` 可调） |
-| 跨域音频无法下载选区 | Web Audio API CORS 限制 | 需服务端配置响应头 |
+| 外部 `src` / `file` 的选区下载受 CORS 限制 | 浏览器内用 Web Audio 解码 | 走后端 `audioId` 时无此问题 |
 | SSR 不支持 | WaveSurfer 依赖浏览器 Web API | 需在客户端挂载 |
 | AudioContext 挂起 | 浏览器要求用户手势才能启动 | 已在首次播放时懒初始化 |
 
@@ -406,15 +416,10 @@ props: {
 | 音频源 | `trackA` / `trackB` 未提供 `src` 或 `file` 时，默认使用 `GET {VITE_API_BASE}/audios/{audioId}/stream?track=A\|B`（单声道 WAV，需支持 Range）；传入 `src` / `file` 则以传入为准 |
 | 环境变量 | `VITE_API_BASE`（默认 `/api/v1`）、`VITE_WS_URL`（为空则不连 WebSocket，转写中改为轮询）、`VITE_PROXY_TARGET`（开发代理目标，默认 `http://localhost:10090`） |
 | 超时 | peaks / silences / transcripts / speakers / scenes 为 120s，其余 30s |
-| 鉴权 | `src/api/auth.js` 的 `configureAuth` 注入 token；`<audio>` 无法带 `Authorization` 头，后端启用鉴权后需另行约定（query token 或 cookie） |
+| 鉴权 | `src/api/auth.js` 的 `configureAuth` 注入 token；`<audio>` 与下载无法带 `Authorization` 头，后端的 `/stream`、`/download` 支持 `?token=`，前端自动附带 |
 
 ### 本地联调
 
-先启动 `voice-player-backend`（端口 10090，见其 README），或在后端未就绪时用 mock 服务（按接口文档返回数据，监听 10090）：
+先启动 `voice-player-backend`（端口 10090，见其 README；默认 mock 模式，不需要任何模型），再 `npm run dev`。**后端里要有对应的音频**（执行后端的 `scripts/seed_demo.py` 准备演示音频），否则播放器显示「音频加载失败」。
 
-```bash
-node scripts/mock-server.js   # 终端 1
-npm run dev                   # 终端 2
-```
-
-后端当前限制：设置 / 翻译 / 编辑为演示数据，不落库；`/ws` 为占位，不推送事件；`confidence` 等字段可能为 `null`。
+`scripts/mock-server.js` 是更早期的前端 mock 服务，**已经不可用**：它依赖的 `public/demo-a.wav` 已随旧演示数据删除，且接口落后（静音接口没有 `both` 字段、没有 `/download`、`/ws` 不推送）。请用后端的 mock 模式代替；这个脚本可以直接删除。

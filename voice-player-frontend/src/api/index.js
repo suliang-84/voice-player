@@ -12,6 +12,17 @@ export const streamUrl = (audioId, track) => {
   return `${http.defaults.baseURL}${audio(audioId)}/stream?track=${track}${token ? `&token=${encodeURIComponent(token)}` : ''}`
 }
 
+// 下载：track 为 A / B（单路）、mix（两路混成单声道）、stereo（A 左 B 右）；start / end（秒）只取该时间范围。
+// 由浏览器直接导航下载，token 同样通过 query 传递
+export const downloadUrl = (audioId, { track, start, end }) => {
+  const query = new URLSearchParams({ track })
+  if (start != null) query.set('start', start.toFixed(3))
+  if (end != null) query.set('end', end.toFixed(3))
+  const token = getToken()
+  if (token) query.set('token', token)
+  return `${http.defaults.baseURL}${audio(audioId)}/download?${query}`
+}
+
 // 后端每次都重新下载并推理，耗时较长，放宽超时
 const SLOW = { timeout: 120000 }
 const slow = (p) => ({ ...SLOW, ...params(p) })
